@@ -1,5 +1,9 @@
 void
 movestack(const Arg *arg) {
+	//check to avoid crash
+    if (!selmon->sel || !selmon->clients)
+        return;
+
 	Client *c = NULL, *p = NULL, *pc = NULL, *i;
 
 	if(arg->i > 0) {
