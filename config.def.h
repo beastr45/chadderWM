@@ -80,7 +80,7 @@ static const char *colors[][3]      = {
 };
 
 /* tagging */
-static char *tags[] = { "󰋜", "󰖟", "", "4", "5", "6", "7", "󰙏", "" };
+static char *tags[] = { "󰋜", "󰖟", "", "", "󰇰", "", "7", "8", "󰒲" };
 
 static const char* eww[] = { "eww", "open" , "eww", NULL };
 
@@ -216,7 +216,7 @@ static const Key keys[] = {
 	/* { MODKEY|ShiftMask,             XK_equal,  setgaps,        {.i = GAP_TOGGLE} }, */
 	{ MODKEY,                       XK_minus,  incrgaps,        {.i = -5 } },
 	{ MODKEY,                       XK_equal,  incrgaps,        {.i = +5 } },
-	{ MODKEY|ControlMask,           XK_o,      setgaps,         {.i = 0 } },
+	// { MODKEY|ControlMask,           XK_o,      setgaps,         {.i = 0 } },
 
     // change border size
     { MODKEY|ShiftMask,                 XK_minus,   setborderpx,    {.i = -1 } },
