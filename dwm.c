@@ -2306,7 +2306,7 @@ void manage(Window w, XWindowAttributes *wa) {
   updatewmhints(c);
   	{
 		int format;
-		unsigned long *data, n, extra;
+		unsigned long *data = NULL, n = 0, extra;
 		Monitor *m;
 		Atom atom;
 		if (XGetWindowProperty(dpy, c->win, netatom[NetClientInfo], 0L, 2L, False, XA_CARDINAL,
@@ -2319,7 +2319,7 @@ void manage(Window w, XWindowAttributes *wa) {
 				}
 			}
 		}
-		if (n > 0)
+		if (data)
 			XFree(data);
 	}
 	setclienttagprop(c);
@@ -3887,6 +3887,12 @@ int updategeom(void) {
 	    }
 	    if (m == selmon)
 		    selmon = mons;
+	// if(showsystray&&systray){
+	//  Client *ni;
+	//  for (ni = systray->icons; ni; ni=ni->next)
+	//    if(ni->mon == m)
+	//      ni->mon = mons;
+	// }
 	    cleanupmon(m);
     }
     free(unique);
