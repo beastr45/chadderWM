@@ -1,5 +1,7 @@
 #!/bin/sh
 
+#this script is not in use currently, am using xinitrc
+
 xrdb merge ~/.Xresources 
 xbacklight -set 10 &
 # feh --bg-fill ~/Pictures/wall/gruv.png &

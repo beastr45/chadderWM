@@ -1,0 +1,6 @@
+
+[Desktop Entry]
+Name=startx
+Comment=just startx
+Exec=startx
+Type=Application

@@ -43,7 +43,7 @@ static const int focusonwheel       = 0;
 /* static const int horizpadbar        = 5; */
 /* static const int vertpadbar         = 11; */
 static const int horizpadbar        = 0;
-static const int vertpadbar         = 5;
+static const int vertpadbar         = 3;
 static const int vertpadtab         = 35;
 static const int horizpadtabi       = 15;
 static const int horizpadtabo       = 15;
@@ -54,7 +54,7 @@ static const int new_window_attach_on_end = 0; /*  1 means the new window will a
 #define ICONSIZE 19   /* icon size */
 #define ICONSPACING 8 /* space between icon and title */
 
-static const char *fonts[]          = {"Noto Sans:style:medium:size=12" ,"JetBrainsMono Nerd Font Mono:style:medium:size=19" };
+static const char *fonts[]          = {"Noto Sans:style:medium:size=15" ,"JetBrainsMono Nerd Font Mono:style:medium:size=12" };
 /* static const char *fonts[]          = {"JetBrainsMono Nerd Font Mono:style:medium:size=19" }; */
 
 // theme
@@ -80,7 +80,7 @@ static const char *colors[][3]      = {
 };
 
 /* tagging */
-static char *tags[] = { "󰋜", "󰖟", "", "", "󰇰", "", "7", "8", "󰒲" };
+static char *tags[] = { "󰋜", "󱍓", "󰖟", "", "󰇰", "6", "7", "󰊗", "󰒲" };
 
 static const char* eww[] = { "eww", "open" , "eww", NULL };
 
@@ -162,7 +162,7 @@ static const Layout layouts[] = {
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 static char dmenumon[2] = "0"; /* component of dmenucmd, manipulated in spawn() */
 static const char *dmenucmd[] = { "dmenu_run", "-m", dmenumon, "-fn", dmenufont, "-nb", gray2, "-nf", gray3, "-sb", green, "-sf", gray4, NULL };
-static const char *termcmd[]  = { "alacritty", NULL };
+static const char *termcmd[]  = { "kitty", NULL };
 
 static const Key keys[] = {
     /* modifier                         key         function        argument */
@@ -200,7 +200,7 @@ static const Key keys[] = {
     // change m,cfact sizes 
     { MODKEY,                           XK_h,       setmfact,       {.f = -0.05} },
     { MODKEY,                           XK_l,       setmfact,       {.f = +0.05} },
-    { MODKEY,                           XK_o,       setmfact,       {.f =  0.00} },
+    // { MODKEY,                           XK_o,       setmfact,       {.f =  0.00} },
     { MODKEY|ShiftMask,                 XK_h,       setcfact,       {.f = +0.25} },
     { MODKEY|ShiftMask,                 XK_l,       setcfact,       {.f = -0.25} },
     { MODKEY|ShiftMask,                 XK_o,       setcfact,       {.f =  0.00} },
