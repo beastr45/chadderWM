@@ -3,6 +3,9 @@
 #include <X11/X.h>
 #include <X11/XF86keysym.h>
 
+/* clang-format off */
+/* everything below is hand column-aligned; keep it out of the formatter's reach */
+
 /* brightness control */
 /* static const char *upbri[] = {"/home/bear/.dwm/screenlight.sh", "up", NULL}; */
 /* static const char *downbri[] = {"/home/bear/.dwm/screenlight.sh", "down", NULL}; */
@@ -407,3 +410,4 @@ static Signal signals[] = {
 	{ "setlayout",      setlayout },
 	{ "setlayoutex",    setlayoutex },
 };
+/* clang-format on */
