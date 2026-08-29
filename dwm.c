@@ -277,7 +277,7 @@ static void drawbars(void);
 static int drawstatusbar(Monitor *m, int bh, char *text);
 static void drawtab(Monitor *m);
 static void drawtabs(void);
-// static void enternotify(XEvent *e);
+static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
 static void focusin(XEvent *e);
@@ -300,7 +300,7 @@ static void manage(Window w, XWindowAttributes *wa);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
 static void monocle(Monitor *m);
-// static void motionnotify(XEvent *e);
+static void motionnotify(XEvent *e);
 static void movemouse(const Arg *arg);
 static void moveorplace(const Arg *arg);
 static Client *nexttiled(Client *c);
@@ -415,13 +415,13 @@ static void (*handler[LASTEvent])(XEvent *) = {
     [ConfigureRequest] = configurerequest,
     [ConfigureNotify] = configurenotify,
     [DestroyNotify] = destroynotify,
-    // [EnterNotify] = enternotify,
+    [EnterNotify] = enternotify,
     [Expose] = expose,
     [FocusIn] = focusin,
     [KeyPress] = keypress,
     [MappingNotify] = mappingnotify,
     [MapRequest] = maprequest,
-    // [MotionNotify] = motionnotify,
+    [MotionNotify] = motionnotify,
     [PropertyNotify] = propertynotify,
     [ResizeRequest] = resizerequest,
     [UnmapNotify] = unmapnotify};
@@ -622,7 +622,6 @@ void arrange(Monitor *m) {
 
 void arrangemon(Monitor *m) {
   updatebarpos(m);
-  updatesystray();
   XMoveResizeWindow(dpy, m->tabwin, m->wx + m->gappov, m->ty,
                     m->ww - 2 * m->gappov, th);
   XMoveWindow(dpy, m->tagwin, m->wx + m->gappov,
@@ -775,10 +774,11 @@ void cleanup(void) {
   XUngrabKey(dpy, AnyKey, AnyModifier, root);
   while (mons)
     cleanupmon(mons);
-  if (showsystray) {
+  if (showsystray && systray) {
     XUnmapWindow(dpy, systray->win);
     XDestroyWindow(dpy, systray->win);
     free(systray);
+    systray = NULL;
   }
   for (i = 0; i < CurLast; i++)
     drw_cur_free(drw, cursor[i]);
@@ -824,7 +824,7 @@ void clientmessage(XEvent *e) {
 
   unsigned int i;
 
-  if (showsystray && cme->window == systray->win &&
+  if (showsystray && systray && cme->window == systray->win &&
       cme->message_type == netatom[NetSystemTrayOP]) {
     /* add systray icons */
     if (cme->data.l[1] == SYSTEM_TRAY_REQUEST_DOCK) {
@@ -2001,23 +2001,23 @@ void drawtab(Monitor *m) {
   drw_map(drw, m->tabwin, 0, 0, m->ww, th);
 }
 
-// void enternotify(XEvent *e) {
-//  Client *c;
-//  Monitor *m;
-//  XCrossingEvent *ev = &e->xcrossing;
-//
-//  if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) &&
-//      ev->window != root)
-//    return;
-//  c = wintoclient(ev->window);
-//  m = c ? c->mon : wintomon(ev->window);
-//  if (m != selmon) {
-//    unfocus(selmon->sel, 1);
-//    selmon = m;
-//  } else if (!c || c == selmon->sel)
-//    return;
-//  focus(c);
-// }
+void enternotify(XEvent *e) {
+  Client *c;
+  Monitor *m;
+  XCrossingEvent *ev = &e->xcrossing;
+
+  if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) &&
+      ev->window != root)
+    return;
+  c = wintoclient(ev->window);
+  m = c ? c->mon : wintomon(ev->window);
+  if (m != selmon) {
+    unfocus(selmon->sel, 1);
+    selmon = m;
+  } else if (!c || c == selmon->sel)
+    return;
+  focus(c);
+}
 
 void expose(XEvent *e) {
   Monitor *m;
@@ -2165,7 +2165,7 @@ long getstate(Window w) {
 unsigned int getsystraywidth() {
   unsigned int w = 0;
   Client *i;
-  if (showsystray)
+  if (showsystray && systray)
     for (i = systray->icons; i; w += i->w + systrayspacing, i = i->next)
       ;
   return w ? w + systrayspacing : 1;
@@ -2471,44 +2471,44 @@ void monocle(Monitor *m) {
   }
 }
 
-// void motionnotify(XEvent *e) {
-//  unsigned int i, x;
-//  static Monitor *mon = NULL;
-//  Monitor *m;
-//  XMotionEvent *ev = &e->xmotion;
-//
-//  if (ev->window == selmon->barwin) {
-// 		i = x = 0;
-// 		do
-// 			x += TEXTW(tags[i]);
-// 		while (ev->x >= x && ++i < LENGTH(tags));
-// 		if (i < LENGTH(tags)) {
-//                  if ((i + 1) != selmon->previewshow &&
-//                  !(selmon->tagset[selmon->seltags] & 1 << i)) {
-// 				selmon->previewshow = i + 1;
-// 				showtagpreview(i);
-//                  } else if (selmon->tagset[selmon->seltags] & 1 << i) {
-// 				selmon->previewshow = 0;
-// 				showtagpreview(0);
-// 		  }
-// 		} else if (selmon->previewshow != 0) {
-// 			selmon->previewshow = 0;
-// 			showtagpreview(0);
-// 		}
-// 	} else if (selmon->previewshow != 0) {
-// 		selmon->previewshow = 0;
-// 		showtagpreview(0);
-//   }
-//
-//  if (ev->window != root)
-//    return;
-//  if ((m = recttomon(ev->x_root, ev->y_root, 1, 1)) != mon && mon) {
-//    unfocus(selmon->sel, 1);
-//    selmon = m;
-//    focus(NULL);
-//  }
-//  mon = m;
-// }
+void motionnotify(XEvent *e) {
+  unsigned int i, x;
+  static Monitor *mon = NULL;
+  Monitor *m;
+  XMotionEvent *ev = &e->xmotion;
+
+  if (ev->window == selmon->barwin) {
+    i = x = 0;
+    do
+      x += TEXTW(tags[i]);
+    while (ev->x >= x && ++i < LENGTH(tags));
+    if (i < LENGTH(tags)) {
+      if ((i + 1) != selmon->previewshow &&
+          !(selmon->tagset[selmon->seltags] & 1 << i)) {
+        selmon->previewshow = i + 1;
+        showtagpreview(i);
+      } else if (selmon->tagset[selmon->seltags] & 1 << i) {
+        selmon->previewshow = 0;
+        showtagpreview(0);
+      }
+    } else if (selmon->previewshow != 0) {
+      selmon->previewshow = 0;
+      showtagpreview(0);
+    }
+  } else if (selmon->previewshow != 0) {
+    selmon->previewshow = 0;
+    showtagpreview(0);
+  }
+
+  if (ev->window != root)
+    return;
+  if ((m = recttomon(ev->x_root, ev->y_root, 1, 1)) != mon && mon) {
+    unfocus(selmon->sel, 1);
+    selmon = m;
+    focus(NULL);
+  }
+  mon = m;
+}
 
 void updateicon(Client *c) {
   freeicon(c);
@@ -2612,15 +2612,22 @@ void placemouse(const Arg *arg) {
   c->isfloating = 0;
   c->beingmoved = 1;
 
-  XGetWindowAttributes(dpy, c->win, &wa);
+  if (!XGetWindowAttributes(dpy, c->win, &wa)) {
+    c->beingmoved = 0;
+    XUngrabPointer(dpy, CurrentTime);
+    return;
+  }
   ocx = wa.x;
   ocy = wa.y;
 
   if (arg->i == 2) // warp cursor to client center
     XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, WIDTH(c) / 2, HEIGHT(c) / 2);
 
-  if (!getrootptr(&x, &y))
+  if (!getrootptr(&x, &y)) {
+    c->beingmoved = 0;
+    XUngrabPointer(dpy, CurrentTime);
     return;
+  }
 
   do {
     XMaskEvent(dpy, MOUSEMASK | ExposureMask | SubstructureRedirectMask, &ev);
@@ -2944,7 +2951,7 @@ Monitor *recttomon(int x, int y, int w, int h) {
 void removesystrayicon(Client *i) {
   Client **ii;
 
-  if (!showsystray || !i)
+  if (!showsystray || !systray || !i)
     return;
   for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next)
     ;
@@ -2960,8 +2967,10 @@ void resize(Client *c, int x, int y, int w, int h, int interact) {
 
 void resizebarwin(Monitor *m) {
   unsigned int w = floatbar ? m->ww - 2 * m->gappov : m->ww;
-  if (showsystray && m == systraytomon(m))
-    w -= getsystraywidth();
+  if (showsystray && m == systraytomon(m)) {
+    unsigned int stw = getsystraywidth();
+    w = stw < w ? w - stw : 1;
+  }
   if (floatbar) {
     XMoveResizeWindow(dpy, m->barwin, m->wx + m->gappov, m->by, w, bh);
   } else {
@@ -3573,7 +3582,7 @@ void togglebar(const Arg *arg) {
       !selmon->showbar;
   updatebarpos(selmon);
   resizebarwin(selmon);
-  if (showsystray) {
+  if (showsystray && systray) {
     XWindowChanges wc;
     if (!selmon->showbar)
       wc.y = -bh;
@@ -3772,14 +3781,16 @@ void updatebars(void) {
     if (m->barwin)
       continue;
     w = m->ww;
-    if (showsystray && m == systraytomon(m))
-      w -= getsystraywidth();
+    if (showsystray && systray && m == systraytomon(m)) {
+      unsigned int stw = getsystraywidth();
+      w = stw < w ? w - stw : 1;
+    }
     m->barwin = XCreateWindow(
         dpy, root, m->wx + m->gappov, m->by, w - 2 * m->gappov, bh, 0,
         DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
         CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
     XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
-    if (showsystray && m == systraytomon(m))
+    if (showsystray && systray && m == systraytomon(m))
       XMapRaised(dpy, systray->win);
     XMapRaised(dpy, m->barwin);
     m->tabwin = XCreateWindow(
@@ -3789,6 +3800,13 @@ void updatebars(void) {
     XDefineCursor(dpy, m->tabwin, cursor[CurNormal]->cursor);
     XMapRaised(dpy, m->tabwin);
     XSetClassHint(dpy, m->barwin, &ch);
+    m->tagwin = XCreateWindow(
+        dpy, root, m->wx, m->by + bh, m->mw / 4, m->mh / 4, 0,
+        DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
+        CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
+    XDefineCursor(dpy, m->tagwin, cursor[CurNormal]->cursor);
+    XMapRaised(dpy, m->tagwin);
+    XUnmapWindow(dpy, m->tagwin);
   }
 }
 
@@ -3799,6 +3817,8 @@ void updatepreview(void) {
                              .background_pixmap = ParentRelative,
                              .event_mask = ButtonPressMask | ExposureMask};
   for (m = mons; m; m = m->next) {
+    if (m->tagwin)
+      continue;
     m->tagwin = XCreateWindow(
         dpy, root, m->wx, m->by + bh, m->mw / 4, m->mh / 4, 0,
         DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
@@ -3844,7 +3864,7 @@ void updatebarpos(Monitor *m) {
       m->by = m->topbar ? m->wy : m->wy + m->wh;
     }
     if (m->topbar) {
-      m->wy = floatbar ? bh + gappoh : bh;
+      m->wy += floatbar ? bh + m->gappoh : bh;
     }
   } else
     m->by = -bh - m->gappoh;
@@ -4224,7 +4244,7 @@ Client *wintoclient(Window w) {
 Client *wintosystrayicon(Window w) {
   Client *i = NULL;
 
-  if (!showsystray || !w)
+  if (!showsystray || !systray || !w)
     return i;
   for (i = systray->icons; i && i->win != w; i = i->next)
     ;
