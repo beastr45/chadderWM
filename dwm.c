@@ -502,6 +502,7 @@ struct NumTags {
 };
 
 /* function implementations */
+/* apply the config.h rules to a new client (tags, floating, monitor, ...) */
 void applyrules(Client *client) {
   const char *class, *instance;
   unsigned int i;
@@ -542,6 +543,8 @@ void applyrules(Client *client) {
                      : client->mon->tagset[client->mon->sel_tags];
 }
 
+/* clamp a requested geometry to the client's size hints / screen; returns
+ * whether it changed */
 int applysizehints(Client *client, int *x, int *y, int *w, int *h,
                    int interact) {
   int baseismin;
@@ -612,6 +615,7 @@ int applysizehints(Client *client, int *x, int *y, int *w, int *h,
          *h != client->h;
 }
 
+/* re-tile and restack one monitor, or every monitor when mon is NULL */
 void arrange(Monitor *mon) {
   if (mon)
     showhide(mon->stack);
@@ -626,6 +630,7 @@ void arrange(Monitor *mon) {
       arrangemon(mon);
 }
 
+/* run the monitor's current layout function and reposition its bar */
 void arrangemon(Monitor *mon) {
   updatebarpos(mon);
   XMoveResizeWindow(display, mon->tab_win, mon->win_x + mon->gappov, mon->tab_y,
@@ -640,6 +645,7 @@ void arrangemon(Monitor *mon) {
     mon->layout[mon->sel_layout]->arrange(mon);
 }
 
+/* link a client into the head (or tail) of its monitor's client list */
 void attach(Client *client) {
   if (new_window_attach_on_end) {
     Client **tmp = &client->mon->clients;
@@ -652,11 +658,13 @@ void attach(Client *client) {
   }
 }
 
+/* push a client onto the top of its monitor's focus stack */
 void attachstack(Client *client) {
   client->stack_next = client->mon->stack;
   client->mon->stack = client;
 }
 
+/* dispatch mouse clicks on the bar, tab bar, or a client window */
 void buttonpress(XEvent *e) {
   unsigned int i, x, click;
   int loop;
@@ -709,9 +717,7 @@ void buttonpress(XEvent *e) {
       click = ClkStatusText;
     else
       click = ClkWinTitle;
-  }
-
-  if (ev->window == sel_mon->tab_win) {
+  } else if (ev->window == sel_mon->tab_win) {
     i = 0;
     x = 0;
     for (client = sel_mon->clients; client; client = client->next) {
@@ -740,7 +746,7 @@ void buttonpress(XEvent *e) {
     }
   } else if ((client = wintoclient(ev->window))) {
     //    focus(client);
-    //    restack(sel_mon);
+    restack(sel_mon);
     if (focusonwheel || (ev->button != Button4 && ev->button != Button5))
       focus(client);
     XAllowEvents(display, ReplayPointer, CurrentTime);
@@ -759,6 +765,7 @@ execute_handler:
               : &buttons[i].arg);
 }
 
+/* abort at startup if another window manager already owns the root window */
 void checkotherwm(void) {
   orig_xerror_handler = XSetErrorHandler(xerrorstart);
   /* this causes an error if some other window manager is running */
@@ -768,6 +775,7 @@ void checkotherwm(void) {
   XSync(display, False);
 }
 
+/* unmanage every client and free all resources before exit */
 void cleanup(void) {
   Arg a = {.ui = ~0};
   Layout foo = {"", NULL};
@@ -800,6 +808,7 @@ void cleanup(void) {
   XDeleteProperty(display, root, net_atom[NetActiveWindow]);
 }
 
+/* unlink a monitor and destroy its bar / tab / preview windows */
 void cleanupmon(Monitor *mon) {
   Monitor *prev;
   size_t i;
@@ -824,6 +833,7 @@ void cleanupmon(Monitor *mon) {
   free(mon);
 }
 
+/* handle EWMH client messages (fullscreen, activate window, systray docking) */
 void clientmessage(XEvent *e) {
   XWindowAttributes wa;
   XSetWindowAttributes swa;
@@ -913,6 +923,7 @@ void clientmessage(XEvent *e) {
   }
 }
 
+/* send a client a synthetic ConfigureNotify with its current geometry */
 void configure(Client *client) {
   XConfigureEvent ce;
 
@@ -930,6 +941,7 @@ void configure(Client *client) {
   XSendEvent(display, client->win, False, StructureNotifyMask, (XEvent *)&ce);
 }
 
+/* react to root-window size changes by reconfiguring monitors and bars */
 void configurenotify(XEvent *e) {
   Monitor *mon;
   Client *client;
@@ -957,6 +969,7 @@ void configurenotify(XEvent *e) {
   }
 }
 
+/* honour or ignore a client's request to change its own geometry */
 void configurerequest(XEvent *e) {
   Client *client;
   Monitor *mon;
@@ -1016,6 +1029,7 @@ void configurerequest(XEvent *e) {
   XSync(display, False);
 }
 
+/* allocate and initialise a Monitor with defaults from config.h */
 Monitor *createmon(void) {
   Monitor *mon;
   size_t i;
@@ -1058,6 +1072,7 @@ Monitor *createmon(void) {
   return mon;
 }
 
+/* switch to the next or previous entry in the layouts array */
 void cyclelayout(const Arg *arg) {
   Layout *l;
   for (l = (Layout *)layouts; l != sel_mon->layout[sel_mon->sel_layout]; l++)
@@ -1075,6 +1090,7 @@ void cyclelayout(const Arg *arg) {
   }
 }
 
+/* unmanage a client (or systray icon) whose window was destroyed */
 void destroynotify(XEvent *e) {
   Client *client;
   XDestroyWindowEvent *ev = &e->xdestroywindow;
@@ -1091,6 +1107,7 @@ void destroynotify(XEvent *e) {
     unmanage(client->swallowing, 1);
 }
 
+/* remove a client from its monitor's client list */
 void detach(Client *client) {
   Client **tc;
 
@@ -1099,6 +1116,7 @@ void detach(Client *client) {
   *tc = client->next;
 }
 
+/* remove a client from the focus stack, choosing a new selection if needed */
 void detachstack(Client *client) {
   Client **tc, *t;
 
@@ -1113,6 +1131,7 @@ void detachstack(Client *client) {
   }
 }
 
+/* return the next or previous monitor in the given direction */
 Monitor *dirtomon(int dir) {
   Monitor *mon = NULL;
 
@@ -1128,6 +1147,7 @@ Monitor *dirtomon(int dir) {
   return mon;
 }
 
+/* render the status text, including ^c/^b/^r/^f markup, into the bar */
 int drawstatusbar(Monitor *mon, int bar_h, char *status_text) {
   int ret, i, w, x, len;
   short isCode = 0;
@@ -1246,6 +1266,7 @@ int drawstatusbar(Monitor *mon, int bar_h, char *status_text) {
   return ret;
 }
 
+/* resize the selected tiled client's cfact by dragging the mouse */
 void dragcfact(const Arg *arg) {
   int prev_x, prev_y, dist_x, dist_y;
   float fact;
@@ -1326,6 +1347,7 @@ void dragcfact(const Arg *arg) {
     ;
 }
 
+/* adjust the master/stack split (mfact) by dragging the mouse */
 void dragmfact(const Arg *arg) {
   unsigned int n;
   int py, px;         // pointer coordinates
@@ -1553,6 +1575,7 @@ void dragmfact(const Arg *arg) {
     ;
 }
 
+/* draw one monitor's bar: tags, layout symbol, launchers, title, status */
 void drawbar(Monitor *mon) {
   int x, y = borderpx, w, status_w = 0, stw = 0;
   int bh_n = bar_h - borderpx * 2;
@@ -1649,6 +1672,7 @@ void drawbar(Monitor *mon) {
   drw_map(drw, mon->bar_win, 0, 0, mon->win_w - stw, bar_h);
 }
 
+/* premultiply an ARGB pixel's colour channels by its alpha */
 static uint32_t prealpha(uint32_t p) {
   uint8_t a = p >> 24u;
   uint32_t rb = (a * (p & 0xFF00FFu)) >> 8u;
@@ -1656,6 +1680,7 @@ static uint32_t prealpha(uint32_t p) {
   return (rb & 0xFF00FFu) | (g & 0x00FF00u) | (a << 24u);
 }
 
+/* read _NET_WM_ICON and return a scaled Picture of the best-fitting icon */
 Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
   int format;
   unsigned long n, extra, *p = NULL;
@@ -1738,6 +1763,7 @@ Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
   return ret;
 }
 
+/* redraw the bar on every monitor */
 void drawbars(void) {
   Monitor *mon;
 
@@ -1745,6 +1771,7 @@ void drawbars(void) {
     drawbar(mon);
 }
 
+/* parse an "fsignal:" root-window name and run it as a bound action */
 int fake_signal(void) {
   char fsignal[256];
   char indicator[9] = "fsignal:";
@@ -1793,6 +1820,7 @@ int fake_signal(void) {
   return 0;
 }
 
+/* run slop to select a screen region and store / apply its dimensions */
 int riodraw(Client *client, const char slopstyle[]) {
   int i;
   char str[100];
@@ -1844,6 +1872,7 @@ int riodraw(Client *client, const char slopstyle[]) {
   return 1;
 }
 
+/* float a client and move it onto a slop-selected region */
 void rioposition(Client *client, int x, int y, int w, int h) {
   Monitor *mon;
   if ((mon = recttomon(x, y, w, h)) && mon != client->mon) {
@@ -1887,6 +1916,7 @@ void riospawn(const Arg *arg) {
     rio_pid = spawncmd(arg);
 }
 
+/* have a terminal swallow the window it spawned by swapping X windows */
 void swallow(Client *p, Client *client) {
 
   if (client->no_swallow || client->is_terminal)
@@ -1913,6 +1943,7 @@ void swallow(Client *p, Client *client) {
   updateclientlist();
 }
 
+/* restore a swallowed terminal once its child window is gone */
 void unswallow(Client *client) {
   client->win = client->swallowing->win;
 
@@ -1931,6 +1962,7 @@ void unswallow(Client *client) {
   arrange(client->mon);
 }
 
+/* redraw the tab bar on every monitor */
 void drawtabs(void) {
   Monitor *mon;
 
@@ -1938,6 +1970,7 @@ void drawtabs(void) {
     drawtab(mon);
 }
 
+/* qsort comparator for ints (used to sort tab label widths) */
 static int cmpint(const void *p1, const void *p2) {
   /* The actual arguments to this function are "pointers to
      pointers to char", but strcmp(3) arguments are "pointers
@@ -1945,6 +1978,8 @@ static int cmpint(const void *p1, const void *p2) {
   return *((int *)p1) > *(int *)p2;
 }
 
+/* draw a monitor's tab bar: one label per visible client plus prev/next/close
+ */
 void drawtab(Monitor *mon) {
   Client *client;
   int i;
@@ -2035,7 +2070,9 @@ void drawtab(Monitor *mon) {
   drw_map(drw, mon->tab_win, 0, 0, mon->win_w, tab_h);
 }
 
+/* focus the client or monitor the pointer just entered */
 void enternotify(XEvent *e) {
+  return;
   Client *client;
   Monitor *mon;
   XCrossingEvent *ev = &e->xcrossing;
@@ -2053,6 +2090,7 @@ void enternotify(XEvent *e) {
   focus(client);
 }
 
+/* redraw a bar when its window is exposed */
 void expose(XEvent *e) {
   Monitor *mon;
   XExposeEvent *ev = &e->xexpose;
@@ -2064,6 +2102,7 @@ void expose(XEvent *e) {
   }
 }
 
+/* give input focus to a client (or the stack top) and update borders and bar */
 void focus(Client *client) {
   if (!client || (!ISVISIBLE(client) || HIDDEN(client)))
     for (client = sel_mon->stack;
@@ -2099,6 +2138,7 @@ void focusin(XEvent *e) {
     setfocus(sel_mon->sel);
 }
 
+/* move focus to the monitor in the given direction */
 void focusmon(const Arg *arg) {
   Monitor *mon;
 
@@ -2111,6 +2151,7 @@ void focusmon(const Arg *arg) {
   focus(NULL);
 }
 
+/* move focus to the next / previous visible client on the current monitor */
 void focusstack(const Arg *arg) {
   Client *client = NULL, *i;
 
@@ -2141,6 +2182,7 @@ void focusstack(const Arg *arg) {
   }
 }
 
+/* focus the nth visible client on the current monitor */
 void focuswin(const Arg *arg) {
   int iwin = arg->i;
   Client *client = NULL;
@@ -2156,6 +2198,7 @@ void focuswin(const Arg *arg) {
   updatecurrentdesktop();
 }
 
+/* return a single Atom-valued window property (with an XEmbed special case) */
 Atom getatomprop(Client *client, Atom prop) {
   int di;
   unsigned long dl;
@@ -2178,6 +2221,7 @@ Atom getatomprop(Client *client, Atom prop) {
   return atom;
 }
 
+/* get the pointer's current position on the root window */
 int getrootptr(int *x, int *y) {
   int di;
   unsigned int dui;
@@ -2186,6 +2230,7 @@ int getrootptr(int *x, int *y) {
   return XQueryPointer(display, root, &dummy, &dummy, x, y, &di, &di, &dui);
 }
 
+/* return a window's WM_STATE value, or -1 if it has none */
 long getstate(Window w) {
   int format;
   long result = -1;
@@ -2203,6 +2248,7 @@ long getstate(Window w) {
   return result;
 }
 
+/* total pixel width of the current system tray icons */
 unsigned int getsystraywidth() {
   unsigned int w = 0;
   Client *i;
@@ -2212,6 +2258,7 @@ unsigned int getsystraywidth() {
   return w ? w + systrayspacing : 1;
 }
 
+/* copy a window text property (e.g. a title) into a fixed buffer */
 int gettextprop(Window w, Atom atom, char *text, unsigned int size) {
   char **list = NULL;
   int n;
@@ -2234,6 +2281,7 @@ int gettextprop(Window w, Atom atom, char *text, unsigned int size) {
   return 1;
 }
 
+/* (re)grab the mouse buttons dwm needs on a client window */
 void grabbuttons(Client *client, int focused) {
   updatenumlockmask();
   {
@@ -2253,6 +2301,7 @@ void grabbuttons(Client *client, int focused) {
   }
 }
 
+/* (re)grab every configured keybinding on the root window */
 void grabkeys(void) {
   updatenumlockmask();
   {
@@ -2270,6 +2319,7 @@ void grabkeys(void) {
   }
 }
 
+/* free a client's cached icon Picture */
 void freeicon(Client *client) {
   if (client->icon) {
     XRenderFreePicture(display, client->icon);
@@ -2278,6 +2328,7 @@ void freeicon(Client *client) {
   updatecurrentdesktop();
 }
 
+/* unmap a client and mark it iconic without unmanaging it */
 void hide(Client *client) {
   if (!client || HIDDEN(client))
     return;
@@ -2302,6 +2353,7 @@ void hide(Client *client) {
   arrange(client->mon);
 }
 
+/* change how many clients occupy the master area for the current tag */
 void incnmaster(const Arg *arg) {
   sel_mon->nmaster = sel_mon->pertag->nmasters[sel_mon->pertag->cur_tag] =
       MAX(sel_mon->nmaster + arg->i, 0);
@@ -2309,6 +2361,7 @@ void incnmaster(const Arg *arg) {
 }
 
 #ifdef XINERAMA
+/* check whether a Xinerama screen geometry is not already in the list */
 static int isuniquegeom(XineramaScreenInfo *unique, size_t n,
                         XineramaScreenInfo *info) {
   while (n--)
@@ -2319,6 +2372,7 @@ static int isuniquegeom(XineramaScreenInfo *unique, size_t n,
 }
 #endif /* XINERAMA */
 
+/* look up a key event in the keys table and run its action */
 void keypress(XEvent *e) {
   unsigned int i;
   KeySym keysym;
@@ -2332,6 +2386,7 @@ void keypress(XEvent *e) {
       keys[i].func(&(keys[i].arg));
 }
 
+/* ask the selected client to close, killing it outright if it refuses */
 void killclient(const Arg *arg) {
   if (!sel_mon->sel)
     return;
@@ -2347,6 +2402,8 @@ void killclient(const Arg *arg) {
   }
 }
 
+/* start managing a newly mapped window: build its Client, apply rules, attach,
+ * map */
 void manage(Window w, XWindowAttributes *wa) {
   Client *client, *t = NULL, *term = NULL;
   Window trans = None;
@@ -2455,6 +2512,7 @@ void manage(Window w, XWindowAttributes *wa) {
   focus(NULL);
 }
 
+/* re-grab keys after a keyboard mapping change */
 void mappingnotify(XEvent *e) {
   XMappingEvent *ev = &e->xmapping;
 
@@ -2463,6 +2521,7 @@ void mappingnotify(XEvent *e) {
     grabkeys();
 }
 
+/* manage a window that asks to be mapped (or activate a systray icon) */
 void maprequest(XEvent *e) {
   static XWindowAttributes wa;
   XMapRequestEvent *ev = &e->xmaprequest;
@@ -2480,6 +2539,7 @@ void maprequest(XEvent *e) {
     manage(ev->window, &wa);
 }
 
+/* layout: stack every client at full window size */
 void monocle(Monitor *mon) {
   unsigned int n = 0;
 
@@ -2513,6 +2573,7 @@ void monocle(Monitor *mon) {
   }
 }
 
+/* handle pointer motion: tag-preview popups and follow-mouse monitor focus */
 void motionnotify(XEvent *e) {
   unsigned int i, x;
   static Monitor *prev_mon = NULL;
@@ -2552,11 +2613,13 @@ void motionnotify(XEvent *e) {
   prev_mon = mon;
 }
 
+/* refresh a client's cached icon from its current _NET_WM_ICON */
 void updateicon(Client *client) {
   freeicon(client);
   client->icon = geticonprop(client->win, &client->icon_w, &client->icon_h);
 }
 
+/* movemouse when floating, otherwise placemouse into the tiling */
 void moveorplace(const Arg *arg) {
   if ((!sel_mon->layout[sel_mon->sel_layout]->arrange ||
        (sel_mon->sel && sel_mon->sel->is_floating)))
@@ -2565,6 +2628,7 @@ void moveorplace(const Arg *arg) {
     placemouse(arg);
 }
 
+/* drag the selected client with the mouse (floating it if tiled) */
 void movemouse(const Arg *arg) {
   int x, y, ocx, ocy, nx, ny;
   Client *client;
@@ -2629,6 +2693,7 @@ void movemouse(const Arg *arg) {
   }
 }
 
+/* return the next visible, non-floating client in a list */
 Client *nexttiled(Client *client) {
   for (; client &&
          (client->is_floating || (!ISVISIBLE(client) || HIDDEN(client)));
@@ -2637,6 +2702,7 @@ Client *nexttiled(Client *client) {
   return client;
 }
 
+/* drag a tiled client and re-insert it into the stack under the pointer */
 void placemouse(const Arg *arg) {
   int x, y, px, py, ocx, ocy, nx = -9999, ny = -9999, freemove = 0;
   Client *client, *r = NULL, *at, *prevr;
@@ -2785,6 +2851,7 @@ void placemouse(const Arg *arg) {
   arrangemon(client->mon);
 }
 
+/* move a client to the top of the master area and focus it */
 void pop(Client *client) {
   detach(client);
   attach(client);
@@ -2792,6 +2859,7 @@ void pop(Client *client) {
   arrange(client->mon);
 }
 
+/* react to window property changes (title, hints, icon, root status text) */
 void propertynotify(XEvent *e) {
   Client *client;
   Window trans;
@@ -2850,8 +2918,10 @@ void propertynotify(XEvent *e) {
   }
 }
 
+/* stop the main event loop */
 void quit(const Arg *arg) { running = 0; }
 
+/* return the PID that owns an X window */
 pid_t winpid(Window w) {
 
   pid_t result = 0;
@@ -2909,6 +2979,7 @@ pid_t winpid(Window w) {
   return result;
 }
 
+/* return the parent PID of a process */
 pid_t getparentprocess(pid_t p) {
   unsigned int v = 0;
 
@@ -2940,6 +3011,7 @@ pid_t getparentprocess(pid_t p) {
   return (pid_t)v;
 }
 
+/* test whether one process is a descendant of another */
 int isdescprocess(pid_t p, pid_t client) {
   while (p != client && client != 0)
     client = getparentprocess(client);
@@ -2947,6 +3019,7 @@ int isdescprocess(pid_t p, pid_t client) {
   return (int)client;
 }
 
+/* find the terminal client that spawned the given window, if any */
 Client *termforwin(const Client *w) {
   Client *client;
   Monitor *mon;
@@ -2965,6 +3038,7 @@ Client *termforwin(const Client *w) {
   return NULL;
 }
 
+/* find the client currently swallowing the given window */
 Client *swallowingclient(Window w) {
   Client *client;
   Monitor *mon;
@@ -2979,6 +3053,7 @@ Client *swallowingclient(Window w) {
   return NULL;
 }
 
+/* return the tiled client that overlaps a rectangle the most */
 Client *recttoclient(int x, int y, int w, int h) {
   Client *client, *r = NULL;
   int a, area = 0;
@@ -2993,6 +3068,7 @@ Client *recttoclient(int x, int y, int w, int h) {
   return r;
 }
 
+/* return the monitor that overlaps a rectangle the most */
 Monitor *recttomon(int x, int y, int w, int h) {
   Monitor *mon, *r = sel_mon;
   int a, area = 0;
@@ -3005,6 +3081,7 @@ Monitor *recttomon(int x, int y, int w, int h) {
   return r;
 }
 
+/* unlink a systray icon from the tray and free it */
 void removesystrayicon(Client *i) {
   Client **ii;
 
@@ -3017,11 +3094,13 @@ void removesystrayicon(Client *i) {
   free(i);
 }
 
+/* resize a client to a geometry after applying its size hints */
 void resize(Client *client, int x, int y, int w, int h, int interact) {
   if (applysizehints(client, &x, &y, &w, &h, interact))
     resizeclient(client, x, y, w, h);
 }
 
+/* move / resize a monitor's bar window, accounting for gaps and the systray */
 void resizebarwin(Monitor *mon) {
   unsigned int w = floatbar ? mon->win_w - 2 * mon->gappov : mon->win_w;
   if (showsystray && mon == systraytomon(mon)) {
@@ -3036,6 +3115,7 @@ void resizebarwin(Monitor *mon) {
   }
 }
 
+/* apply a new geometry to a client and notify it via ConfigureNotify */
 void resizeclient(Client *client, int x, int y, int w, int h) {
   XWindowChanges wc;
 
@@ -3068,6 +3148,7 @@ void resizeclient(Client *client, int x, int y, int w, int h) {
   XSync(display, False);
 }
 
+/* resize the selected client with the mouse from its bottom-right corner */
 void resizemouse(const Arg *arg) {
   int ocx, ocy, nw, nh;
   Client *client;
@@ -3134,6 +3215,7 @@ void resizemouse(const Arg *arg) {
   }
 }
 
+/* honour a systray icon's request to resize itself */
 void resizerequest(XEvent *e) {
   XResizeRequestEvent *ev = &e->xresizerequest;
   Client *i;
@@ -3145,6 +3227,7 @@ void resizerequest(XEvent *e) {
   }
 }
 
+/* raise the floating/selected window and restore tiled stacking order */
 void restack(Monitor *mon) {
   Client *client;
   XEvent ev;
@@ -3170,6 +3253,7 @@ void restack(Monitor *mon) {
     ;
 }
 
+/* the main event loop: read X events and dispatch them to handlers */
 void run(void) {
   XEvent ev;
   /* main event loop */
@@ -3179,6 +3263,7 @@ void run(void) {
       event_handlers[ev.type](&ev); /* call handler */
 }
 
+/* at startup, adopt windows that already exist on the display */
 void scan(void) {
   unsigned int i, num;
   Window d1, d2, *wins = NULL;
@@ -3204,6 +3289,7 @@ void scan(void) {
   }
 }
 
+/* move a client to another monitor */
 void sendmon(Client *client, Monitor *mon) {
   if (client->mon == mon)
     return;
@@ -3219,6 +3305,7 @@ void sendmon(Client *client, Monitor *mon) {
   arrange(NULL);
 }
 
+/* change the current monitor's border width and re-fit its clients */
 void setborderpx(const Arg *arg) {
   Client *client;
   int prev_borderpx = sel_mon->borderpx;
@@ -3254,6 +3341,7 @@ void setborderpx(const Arg *arg) {
   arrange(sel_mon);
 }
 
+/* set a client's WM_STATE property */
 void setclientstate(Client *client, long state) {
   long data[] = {state, None};
 
@@ -3261,11 +3349,13 @@ void setclientstate(Client *client, long state) {
                   PropModeReplace, (unsigned char *)data, 2);
 }
 
+/* set the EWMH _NET_CURRENT_DESKTOP property */
 void setcurrentdesktop(void) {
   long data[] = {0};
   XChangeProperty(display, root, net_atom[NetCurrentDesktop], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)data, 1);
 }
+/* publish the tag names as EWMH _NET_DESKTOP_NAMES */
 void setdesktopnames(void) {
   XTextProperty text;
   Xutf8TextListToTextProperty(display, tags, TAGSLENGTH, XUTF8StringStyle,
@@ -3273,6 +3363,7 @@ void setdesktopnames(void) {
   XSetTextProperty(display, root, &text, net_atom[NetDesktopNames]);
 }
 
+/* send an X ClientMessage to a window (WM protocol or XEmbed message) */
 int sendevent(Window w, Atom proto, int mask, long d0, long d1, long d2,
               long d3, long d4) {
   int n;
@@ -3306,12 +3397,14 @@ int sendevent(Window w, Atom proto, int mask, long d0, long d1, long d2,
   return exists;
 }
 
+/* set the EWMH _NET_NUMBER_OF_DESKTOPS property */
 void setnumdesktops(void) {
   long data[] = {TAGSLENGTH};
   XChangeProperty(display, root, net_atom[NetNumberOfDesktops], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)data, 1);
 }
 
+/* give X input focus to a client and mark it _NET_ACTIVE_WINDOW */
 void setfocus(Client *client) {
   if (!client->never_focus) {
     XSetInputFocus(display, client->win, RevertToPointerRoot, CurrentTime);
@@ -3322,6 +3415,7 @@ void setfocus(Client *client) {
             wm_atom[WMTakeFocus], CurrentTime, 0, 0, 0);
 }
 
+/* enter or leave fullscreen for a client */
 void setfullscreen(Client *client, int fullscreen) {
   if (fullscreen && !client->is_fullscreen) {
     XChangeProperty(display, client->win, net_atom[NetWMState], XA_ATOM, 32,
@@ -3350,6 +3444,7 @@ void setfullscreen(Client *client, int fullscreen) {
   }
 }
 
+/* set (or toggle) the layout for the current tag */
 void setlayout(const Arg *arg) {
   if (!arg || !arg->v || arg->v != sel_mon->layout[sel_mon->sel_layout])
     sel_mon->sel_layout =
@@ -3367,6 +3462,7 @@ void setlayout(const Arg *arg) {
     drawbar(sel_mon);
 }
 
+/* change the selected client's size factor within the stack */
 void setcfact(const Arg *arg) {
   float f;
   Client *client;
@@ -3389,6 +3485,7 @@ void setcfact(const Arg *arg) {
   arrange(sel_mon);
 }
 
+/* change the master-area width fraction for the current tag */
 /* arg > 1.0 will set mfact absolutely */
 void setmfact(const Arg *arg) {
   float f;
@@ -3402,6 +3499,7 @@ void setmfact(const Arg *arg) {
   arrange(sel_mon);
 }
 
+/* one-time init: screen, atoms, cursors, colours, bars, root event mask */
 void setup(void) {
   int i;
   XSetWindowAttributes wa;
@@ -3507,12 +3605,14 @@ void setup(void) {
   grabkeys();
   focus(NULL);
 }
+/* set the EWMH _NET_DESKTOP_VIEWPORT property */
 void setviewport(void) {
   long data[] = {0, 0};
   XChangeProperty(display, root, net_atom[NetDesktopViewport], XA_CARDINAL, 32,
                   PropModeReplace, (unsigned char *)data, 2);
 }
 
+/* set or clear a client's urgency hint */
 void seturgent(Client *client, int urg) {
   XWMHints *wmh;
 
@@ -3524,6 +3624,7 @@ void seturgent(Client *client, int urg) {
   XFree(wmh);
 }
 
+/* re-map a previously hidden client */
 void show(Client *client) {
   if (!client || !HIDDEN(client))
     return;
@@ -3533,6 +3634,7 @@ void show(Client *client) {
   arrange(client->mon);
 }
 
+/* recursively map visible clients and slide hidden ones off-screen */
 void showhide(Client *client) {
   if (!client)
     return;
@@ -3551,6 +3653,7 @@ void showhide(Client *client) {
   }
 }
 
+/* show or hide the hovered tag's preview thumbnail window */
 void showtagpreview(int tag) {
   if (!sel_mon->preview_show || !tag_preview) {
     XUnmapWindow(display, sel_mon->tag_win);
@@ -3568,6 +3671,7 @@ void showtagpreview(int tag) {
     XUnmapWindow(display, sel_mon->tag_win);
 }
 
+/* reap zombie child processes */
 void sigchld(int unused) {
   if (signal(SIGCHLD, sigchld) == SIG_ERR)
     die("can't install SIGCHLD handler:");
@@ -3575,7 +3679,9 @@ void sigchld(int unused) {
     ;
 }
 
+/* fork and exec a command */
 void spawn(const Arg *arg) { spawncmd(arg); }
+/* fork / exec a command and return the child PID */
 pid_t spawncmd(const Arg *arg) {
   pid_t pid;
   // if (fork() == 0) {
@@ -3589,12 +3695,14 @@ pid_t spawncmd(const Arg *arg) {
   return pid;
 }
 
+/* store a client's tags and monitor number in _NET_CLIENT_INFO */
 void setclienttagprop(Client *client) {
   long data[] = {(long)client->tags, (long)client->mon->num};
   XChangeProperty(display, client->win, net_atom[NetClientInfo], XA_CARDINAL,
                   32, PropModeReplace, (unsigned char *)data, 2);
 }
 
+/* snapshot the currently viewed tags' contents for use as tag previews */
 void switchtag(void) {
   int i;
   unsigned int occ = 0;
@@ -3630,6 +3738,7 @@ void switchtag(void) {
   }
 }
 
+/* cycle or set the tab-bar display mode for the current monitor */
 void tabmode(const Arg *arg) {
   if (arg && arg->i >= 0)
     sel_mon->showtab = arg->ui % showtab_nmodes;
@@ -3639,6 +3748,7 @@ void tabmode(const Arg *arg) {
   updatecurrentdesktop();
 }
 
+/* move the selected client to the given tag(s) */
 void tag(const Arg *arg) {
   Client *client;
   if (sel_mon->sel && arg->ui & TAGMASK) {
@@ -3650,12 +3760,14 @@ void tag(const Arg *arg) {
   }
 }
 
+/* send the selected client to the monitor in the given direction */
 void tagmon(const Arg *arg) {
   if (!sel_mon->sel || !monitors->next)
     return;
   sendmon(sel_mon->sel, dirtomon(arg->i));
 }
 
+/* show or hide the current monitor's bar */
 void togglebar(const Arg *arg) {
   sel_mon->showbar = sel_mon->pertag->showbars[sel_mon->pertag->cur_tag] =
       !sel_mon->showbar;
@@ -3675,6 +3787,7 @@ void togglebar(const Arg *arg) {
   arrange(sel_mon);
 }
 
+/* toggle the selected client between floating and tiled */
 void togglefloating(const Arg *arg) {
   if (!sel_mon->sel)
     return;
@@ -3688,11 +3801,13 @@ void togglefloating(const Arg *arg) {
   arrange(sel_mon);
 }
 
+/* toggle fullscreen on the selected client */
 void togglefullscr(const Arg *arg) {
   if (sel_mon->sel)
     setfullscreen(sel_mon->sel, !sel_mon->sel->is_fullscreen);
 }
 
+/* add or remove tag(s) on the selected client */
 void toggletag(const Arg *arg) {
   unsigned int newtags;
 
@@ -3708,6 +3823,7 @@ void toggletag(const Arg *arg) {
   updatecurrentdesktop();
 }
 
+/* add or remove tag(s) from the current view */
 void toggleview(const Arg *arg) {
   unsigned int newtagset =
       sel_mon->tagset[sel_mon->sel_tags] ^ (arg->ui & TAGMASK);
@@ -3751,6 +3867,7 @@ void toggleview(const Arg *arg) {
   updatecurrentdesktop();
 }
 
+/* hide the selected client and remember it on the hidden-window stack */
 void hidewin(const Arg *arg) {
   if (!sel_mon->sel)
     return;
@@ -3759,6 +3876,7 @@ void hidewin(const Arg *arg) {
   hidden_win_stack[++hidden_win_stack_top] = client;
 }
 
+/* un-hide the most recently hidden client for the current tag */
 void restorewin(const Arg *arg) {
   int i = hidden_win_stack_top;
   while (i > -1) {
@@ -3777,6 +3895,7 @@ void restorewin(const Arg *arg) {
   }
 }
 
+/* drop focus from a client and reset its border colour */
 void unfocus(Client *client, int setfocus) {
   if (!client)
     return;
@@ -3788,6 +3907,7 @@ void unfocus(Client *client, int setfocus) {
   }
 }
 
+/* stop managing a client (window gone or closed) and clean up */
 void unmanage(Client *client, int destroyed) {
   Monitor *mon = client->mon;
   XWindowChanges wc;
@@ -3835,6 +3955,7 @@ void unmanage(Client *client, int destroyed) {
   }
 }
 
+/* unmanage a client that unmapped itself (or remap a stray systray icon) */
 void unmapnotify(XEvent *e) {
   Client *client;
   XUnmapEvent *ev = &e->xunmap;
@@ -3852,6 +3973,7 @@ void unmapnotify(XEvent *e) {
   }
 }
 
+/* create the bar, tab, and preview windows for every monitor */
 void updatebars(void) {
   unsigned int w;
   Monitor *mon;
@@ -3897,6 +4019,7 @@ void updatebars(void) {
   }
 }
 
+/* create the tag-preview window for every monitor */
 void updatepreview(void) {
   Monitor *mon;
 
@@ -3917,6 +4040,7 @@ void updatepreview(void) {
   }
 }
 
+/* recompute a monitor's bar / tab position and shrink its usable area */
 void updatebarpos(Monitor *mon) {
   Client *client;
   int nvis = 0;
@@ -3963,6 +4087,7 @@ void updatebarpos(Monitor *mon) {
     mon->bar_y = -bar_h - mon->gappoh;
 }
 
+/* rebuild the EWMH _NET_CLIENT_LIST property */
 void updateclientlist() {
   Client *client;
   Monitor *mon;
@@ -3974,6 +4099,7 @@ void updateclientlist() {
                       PropModeAppend, (unsigned char *)&(client->win), 1);
 }
 
+/* update _NET_CURRENT_DESKTOP from the current tagset */
 void updatecurrentdesktop(void) {
   long rawdata[] = {sel_mon->tagset[sel_mon->sel_tags]};
   int i = 0;
@@ -3985,6 +4111,7 @@ void updatecurrentdesktop(void) {
                   PropModeReplace, (unsigned char *)data, 1);
 }
 
+/* detect monitor changes via Xinerama and add / remove / resize monitors */
 int updategeom(void) {
   int dirty = 0;
 
@@ -4068,6 +4195,7 @@ int updategeom(void) {
   return dirty;
 }
 
+/* work out which modifier bit is Num Lock */
 void updatenumlockmask(void) {
   unsigned int i, j;
   XModifierKeymap *modmap;
@@ -4082,6 +4210,7 @@ void updatenumlockmask(void) {
   XFreeModifiermap(modmap);
 }
 
+/* read a client's WM size hints into its Client struct */
 void updatesizehints(Client *client) {
   long msize;
   XSizeHints size;
@@ -4126,6 +4255,7 @@ void updatesizehints(Client *client) {
   client->hints_valid = 1;
 }
 
+/* refresh the status text from the root window name and redraw the bar */
 void updatestatus(void) {
   if (!gettextprop(root, XA_WM_NAME, status_text, sizeof(status_text)))
     strcpy(status_text, "dwm-" VERSION);
@@ -4133,6 +4263,7 @@ void updatestatus(void) {
   updatesystray();
 }
 
+/* compute a systray icon's size within the tray */
 void updatesystrayicongeom(Client *i, int w, int h) {
   int rh = bar_h - vertpadbar;
   if (i) {
@@ -4156,6 +4287,7 @@ void updatesystrayicongeom(Client *i, int w, int h) {
   }
 }
 
+/* map or unmap a systray icon following its XEMBED state */
 void updatesystrayiconstate(Client *i, XPropertyEvent *ev) {
   long flags;
   int code = 0;
@@ -4180,6 +4312,7 @@ void updatesystrayiconstate(Client *i, XPropertyEvent *ev) {
             0, systray->win, XEMBED_EMBEDDED_VERSION);
 }
 
+/* lay out and redraw the system tray and its icons */
 void updatesystray(void) {
   XSetWindowAttributes wa;
   XWindowChanges wc;
@@ -4254,6 +4387,7 @@ void updatesystray(void) {
   XSync(display, False);
 }
 
+/* refresh a client's cached window title */
 void updatetitle(Client *client) {
   if (!gettextprop(client->win, net_atom[NetWMName], client->name,
                    sizeof client->name))
@@ -4262,6 +4396,7 @@ void updatetitle(Client *client) {
     strcpy(client->name, broken);
 }
 
+/* apply behaviour from a window's type (e.g. dialog, fullscreen) */
 void updatewindowtype(Client *client) {
   Atom state = getatomprop(client, net_atom[NetWMState]);
   Atom wtype = getatomprop(client, net_atom[NetWMWindowType]);
@@ -4274,6 +4409,7 @@ void updatewindowtype(Client *client) {
   }
 }
 
+/* read a client's WM hints (urgency, input-focus model) */
 void updatewmhints(Client *client) {
   XWMHints *wmh;
 
@@ -4291,6 +4427,7 @@ void updatewmhints(Client *client) {
   }
 }
 
+/* switch the current monitor to the given tag(s) */
 void view(const Arg *arg) {
   int i;
   unsigned int tmptag;
@@ -4333,6 +4470,7 @@ void view(const Arg *arg) {
   updatecurrentdesktop();
 }
 
+/* find the managed client that owns a window */
 Client *wintoclient(Window w) {
   Client *client;
   Monitor *mon;
@@ -4344,6 +4482,7 @@ Client *wintoclient(Window w) {
   return NULL;
 }
 
+/* find the systray icon that owns a window */
 Client *wintosystrayicon(Window w) {
   Client *i = NULL;
 
@@ -4354,6 +4493,7 @@ Client *wintosystrayicon(Window w) {
   return i;
 }
 
+/* find the monitor a window (or the pointer) is on */
 Monitor *wintomon(Window w) {
   int x, y;
   Client *client;
@@ -4389,6 +4529,7 @@ int xerror(Display *display, XErrorEvent *ee) {
   return orig_xerror_handler(display, ee); /* may call exit */
 }
 
+/* X error handler that ignores everything */
 int xerrordummy(Display *display, XErrorEvent *ee) { return 0; }
 
 /* Startup Error handler to check if another window manager
@@ -4398,6 +4539,7 @@ int xerrorstart(Display *display, XErrorEvent *ee) {
   return -1;
 }
 
+/* return the monitor the system tray should live on */
 Monitor *systraytomon(Monitor *mon) {
   Monitor *t;
   int i, n;
@@ -4416,6 +4558,7 @@ Monitor *systraytomon(Monitor *mon) {
   return t;
 }
 
+/* swap the selected client with the master (or promote the next one) */
 void zoom(const Arg *arg) {
   Client *client = sel_mon->sel;
 
@@ -4428,6 +4571,7 @@ void zoom(const Arg *arg) {
   pop(client);
 }
 
+/* parse args, open the display, set up, scan, run the loop, then clean up */
 int main(int argc, char *argv[]) {
   if (argc == 2 && !strcmp("-v", argv[1]))
     die("dwm-" VERSION);
@@ -4458,6 +4602,7 @@ int main(int argc, char *argv[]) {
   return EXIT_SUCCESS;
 }
 
+/* focus the first client in the master area */
 void focusmaster(const Arg *arg) {
   Client *client;
 
