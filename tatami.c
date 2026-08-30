@@ -1,29 +1,31 @@
-void tatami(Monitor *m) {
+void tatami(Monitor *mon) {
   unsigned int i, n, nx, ny, nw, nh, mats, tc, tnx, tny, tnw, tnh;
-  Client *c;
+  Client *client;
 
-  for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), ++n)
+  for (n = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), ++n)
     ;
   if (n == 0)
     return;
 
-  nx = m->wx;
+  nx = mon->win_x;
   ny = 0;
-  nw = m->ww;
-  nh = m->wh;
+  nw = mon->win_w;
+  nh = mon->win_h;
 
-  c = nexttiled(m->clients);
+  client = nexttiled(mon->clients);
 
   if (n != 1)
-    nw = m->ww * m->mfact;
-  ny = m->wy;
+    nw = mon->win_w * mon->mfact;
+  ny = mon->win_y;
 
-  resize(c, nx, ny, nw - 2 * c->bw, nh - 2 * c->bw, False);
+  resize(client, nx, ny, nw - 2 * client->border_w, nh - 2 * client->border_w,
+         False);
 
-  c = nexttiled(c->next);
+  client = nexttiled(client->next);
 
   nx += nw;
-  nw = m->ww - nw;
+  nw = mon->win_w - nw;
 
   if (n > 1) {
 
@@ -32,7 +34,7 @@ void tatami(Monitor *m) {
 
     nh /= (mats + (tc % 5 > 0));
 
-    for (i = 0; c && (i < (tc % 5)); c = nexttiled(c->next)) {
+    for (i = 0; client && (i < (tc % 5)); client = nexttiled(client->next)) {
       tnw = nw;
       tnx = nx;
       tnh = nh;
@@ -88,12 +90,13 @@ void tatami(Monitor *m) {
         break;
       }
       ++i;
-      resize(c, tnx, tny, tnw - 2 * c->bw, tnh - 2 * c->bw, False);
+      resize(client, tnx, tny, tnw - 2 * client->border_w,
+             tnh - 2 * client->border_w, False);
     }
 
     ++mats;
 
-    for (i = 0; c && (mats > 0); c = nexttiled(c->next)) {
+    for (i = 0; client && (mats > 0); client = nexttiled(client->next)) {
 
       if ((i % 5) == 0) {
         --mats;
@@ -139,7 +142,8 @@ void tatami(Monitor *m) {
 
       ++i;
       // i%=5;
-      resize(c, tnx, tny, tnw - 2 * c->bw, tnh - 2 * c->bw, False);
+      resize(client, tnx, tny, tnw - 2 * client->border_w,
+             tnh - 2 * client->border_w, False);
     }
   }
 }

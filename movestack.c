@@ -1,54 +1,58 @@
 void movestack(const Arg *arg) {
   // check to avoid crash
-  if (!selmon->sel || !selmon->clients)
+  if (!sel_mon->sel || !sel_mon->clients)
     return;
 
-  Client *c = NULL, *p = NULL, *pc = NULL, *i;
+  Client *client = NULL, *p = NULL, *pc = NULL, *i;
 
   if (arg->i > 0) {
-    /* find the client after selmon->sel */
-    for (c = selmon->sel->next; c && (!ISVISIBLE(c) || c->isfloating);
-         c = c->next)
+    /* find the client after sel_mon->sel */
+    for (client = sel_mon->sel->next;
+         client && (!ISVISIBLE(client) || client->is_floating);
+         client = client->next)
       ;
-    if (!c)
-      for (c = selmon->clients; c && (!ISVISIBLE(c) || c->isfloating);
-           c = c->next)
+    if (!client)
+      for (client = sel_mon->clients;
+           client && (!ISVISIBLE(client) || client->is_floating);
+           client = client->next)
         ;
 
   } else {
-    /* find the client before selmon->sel */
-    for (i = selmon->clients; i != selmon->sel; i = i->next)
-      if (ISVISIBLE(i) && !i->isfloating)
-        c = i;
-    if (!c)
+    /* find the client before sel_mon->sel */
+    for (i = sel_mon->clients; i != sel_mon->sel; i = i->next)
+      if (ISVISIBLE(i) && !i->is_floating)
+        client = i;
+    if (!client)
       for (; i; i = i->next)
-        if (ISVISIBLE(i) && !i->isfloating)
-          c = i;
+        if (ISVISIBLE(i) && !i->is_floating)
+          client = i;
   }
-  /* find the client before selmon->sel and c */
-  for (i = selmon->clients; i && (!p || !pc); i = i->next) {
-    if (i->next == selmon->sel)
+  /* find the client before sel_mon->sel and client */
+  for (i = sel_mon->clients; i && (!p || !pc); i = i->next) {
+    if (i->next == sel_mon->sel)
       p = i;
-    if (i->next == c)
+    if (i->next == client)
       pc = i;
   }
 
-  /* swap c and selmon->sel selmon->clients in the selmon->clients list */
-  if (c && c != selmon->sel) {
-    Client *temp = selmon->sel->next == c ? selmon->sel : selmon->sel->next;
-    selmon->sel->next = c->next == selmon->sel ? c : c->next;
-    c->next = temp;
+  /* swap client and sel_mon->sel sel_mon->clients in the sel_mon->clients list
+   */
+  if (client && client != sel_mon->sel) {
+    Client *temp =
+        sel_mon->sel->next == client ? sel_mon->sel : sel_mon->sel->next;
+    sel_mon->sel->next = client->next == sel_mon->sel ? client : client->next;
+    client->next = temp;
 
-    if (p && p != c)
-      p->next = c;
-    if (pc && pc != selmon->sel)
-      pc->next = selmon->sel;
+    if (p && p != client)
+      p->next = client;
+    if (pc && pc != sel_mon->sel)
+      pc->next = sel_mon->sel;
 
-    if (selmon->sel == selmon->clients)
-      selmon->clients = c;
-    else if (c == selmon->clients)
-      selmon->clients = selmon->sel;
+    if (sel_mon->sel == sel_mon->clients)
+      sel_mon->clients = client;
+    else if (client == sel_mon->clients)
+      sel_mon->clients = sel_mon->sel;
 
-    arrange(selmon);
+    arrange(sel_mon);
   }
 }

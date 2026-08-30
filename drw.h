@@ -5,7 +5,7 @@ typedef struct {
 } Cur;
 
 typedef struct Fnt {
-  Display *dpy;
+  Display *display;
   unsigned int h;
   XftFont *xfont;
   FcPattern *pattern;
@@ -17,7 +17,7 @@ typedef XftColor Clr;
 
 typedef struct {
   unsigned int w, h;
-  Display *dpy;
+  Display *display;
   int screen;
   Window root;
   Drawable drawable;
@@ -29,7 +29,7 @@ typedef struct {
 } Drw;
 
 /* Drawable abstraction */
-Drw *drw_create(Display *dpy, int screen, Window win, unsigned int w,
+Drw *drw_create(Display *display, int screen, Window win, unsigned int w,
                 unsigned int h);
 void drw_resize(Drw *drw, unsigned int w, unsigned int h);
 void drw_free(Drw *drw);

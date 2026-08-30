@@ -13,17 +13,17 @@ void setgaps(int oh, int ov, int ih, int iv) {
   if (iv < 0)
     iv = 0;
 
-  selmon->gappoh = oh;
-  selmon->gappov = ov;
-  selmon->gappih = ih;
-  selmon->gappiv = iv;
-  arrange(selmon);
+  sel_mon->gappoh = oh;
+  sel_mon->gappov = ov;
+  sel_mon->gappih = ih;
+  sel_mon->gappiv = iv;
+  arrange(sel_mon);
 }
 
 void togglegaps(const Arg *arg) {
 #if PERTAG_PATCH
-  selmon->pertag->enablegaps[selmon->pertag->curtag] =
-      !selmon->pertag->enablegaps[selmon->pertag->curtag];
+  sel_mon->pertag->enablegaps[sel_mon->pertag->cur_tag] =
+      !sel_mon->pertag->enablegaps[sel_mon->pertag->cur_tag];
 #else
   enablegaps = !enablegaps;
 #endif // PERTAG_PATCH
@@ -33,60 +33,62 @@ void togglegaps(const Arg *arg) {
 void defaultgaps(const Arg *arg) { setgaps(gappoh, gappov, gappih, gappiv); }
 
 void incrgaps(const Arg *arg) {
-  setgaps(selmon->gappoh + arg->i, selmon->gappov + arg->i,
-          selmon->gappih + arg->i, selmon->gappiv + arg->i);
+  setgaps(sel_mon->gappoh + arg->i, sel_mon->gappov + arg->i,
+          sel_mon->gappih + arg->i, sel_mon->gappiv + arg->i);
 }
 
 void incrigaps(const Arg *arg) {
-  setgaps(selmon->gappoh, selmon->gappov, selmon->gappih + arg->i,
-          selmon->gappiv + arg->i);
+  setgaps(sel_mon->gappoh, sel_mon->gappov, sel_mon->gappih + arg->i,
+          sel_mon->gappiv + arg->i);
 }
 
 void incrogaps(const Arg *arg) {
-  setgaps(selmon->gappoh + arg->i, selmon->gappov + arg->i, selmon->gappih,
-          selmon->gappiv);
+  setgaps(sel_mon->gappoh + arg->i, sel_mon->gappov + arg->i, sel_mon->gappih,
+          sel_mon->gappiv);
 }
 
 void incrohgaps(const Arg *arg) {
-  setgaps(selmon->gappoh + arg->i, selmon->gappov, selmon->gappih,
-          selmon->gappiv);
+  setgaps(sel_mon->gappoh + arg->i, sel_mon->gappov, sel_mon->gappih,
+          sel_mon->gappiv);
 }
 
 void incrovgaps(const Arg *arg) {
-  setgaps(selmon->gappoh, selmon->gappov + arg->i, selmon->gappih,
-          selmon->gappiv);
+  setgaps(sel_mon->gappoh, sel_mon->gappov + arg->i, sel_mon->gappih,
+          sel_mon->gappiv);
 }
 
 void incrihgaps(const Arg *arg) {
-  setgaps(selmon->gappoh, selmon->gappov, selmon->gappih + arg->i,
-          selmon->gappiv);
+  setgaps(sel_mon->gappoh, sel_mon->gappov, sel_mon->gappih + arg->i,
+          sel_mon->gappiv);
 }
 
 void incrivgaps(const Arg *arg) {
-  setgaps(selmon->gappoh, selmon->gappov, selmon->gappih,
-          selmon->gappiv + arg->i);
+  setgaps(sel_mon->gappoh, sel_mon->gappov, sel_mon->gappih,
+          sel_mon->gappiv + arg->i);
 }
 
-void getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc) {
+void getgaps(Monitor *mon, int *oh, int *ov, int *ih, int *iv,
+             unsigned int *nc) {
   unsigned int n, oe, ie;
 #if PERTAG_PATCH
-  oe = ie = selmon->pertag->enablegaps[selmon->pertag->curtag];
+  oe = ie = sel_mon->pertag->enablegaps[sel_mon->pertag->cur_tag];
 #else
   oe = ie = enablegaps;
 #endif // PERTAG_PATCH
-  Client *c;
+  Client *client;
 
-  for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
+  for (n = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), n++)
     ;
   if (smartgaps && n == 1) {
     oe = 0; // outer gaps disabled when only one client
   }
 
-  *oh = m->gappoh * oe; // outer horizontal gap
-  *ov = m->gappov * oe; // outer vertical gap
-  *ih = m->gappih * ie; // inner horizontal gap
-  *iv = m->gappiv * ie; // inner vertical gap
-  *nc = n;              // number of clients
+  *oh = mon->gappoh * oe; // outer horizontal gap
+  *ov = mon->gappov * oe; // outer vertical gap
+  *ih = mon->gappih * ie; // inner horizontal gap
+  *iv = mon->gappiv * ie; // inner vertical gap
+  *nc = n;                // number of clients
 }
 
 void getfacts(Monitor *m, int msize, int ssize, float *mf, float *sf, int *mr,
@@ -124,91 +126,95 @@ void getfacts(Monitor *m, int msize, int ssize, float *mf, float *sf, int *mr,
  * Bottomstack layout + gaps
  * https://dwm.suckless.org/patches/bottomstack/
  */
-static void bstack(Monitor *m) {
+static void bstack(Monitor *mon) {
   unsigned int i, n;
   int oh, ov, ih, iv;
   int mx = 0, my = 0, mh = 0, mw = 0;
   int sx = 0, sy = 0, sh = 0, sw = 0;
   float mfacts, sfacts;
   int mrest, srest;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
-  sx = mx = m->wx + ov;
-  sy = my = m->wy + oh;
-  sh = mh = m->wh - 2 * oh;
-  mw = m->ww - 2 * ov - iv * (MIN(n, m->nmaster) - 1);
-  sw = m->ww - 2 * ov - iv * (n - m->nmaster - 1);
+  sx = mx = mon->win_x + ov;
+  sy = my = mon->win_y + oh;
+  sh = mh = mon->win_h - 2 * oh;
+  mw = mon->win_w - 2 * ov - iv * (MIN(n, mon->nmaster) - 1);
+  sw = mon->win_w - 2 * ov - iv * (n - mon->nmaster - 1);
 
-  if (m->nmaster && n > m->nmaster) {
-    sh = (mh - ih) * (1 - m->mfact);
+  if (mon->nmaster && n > mon->nmaster) {
+    sh = (mh - ih) * (1 - mon->mfact);
     mh = mh - ih - sh;
     sx = mx;
     sy = my + mh + ih;
   }
 
-  getfacts(m, mw, sw, &mfacts, &sfacts, &mrest, &srest);
+  getfacts(mon, mw, sw, &mfacts, &sfacts, &mrest, &srest);
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
-    if (i < m->nmaster) {
-      resize(c, mx, my,
-             mw * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw),
-             mh - (2 * c->bw), 0);
-      mx += WIDTH(c) + iv;
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++) {
+    if (i < mon->nmaster) {
+      resize(client, mx, my,
+             mw * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
+             mh - (2 * client->border_w), 0);
+      mx += WIDTH(client) + iv;
     } else {
-      resize(c, sx, sy,
-             sw * (c->cfact / sfacts) + ((i - m->nmaster) < srest ? 1 : 0) -
-                 (2 * c->bw),
-             sh - (2 * c->bw), 0);
-      sx += WIDTH(c) + iv;
+      resize(client, sx, sy,
+             sw * (client->cfact / sfacts) +
+                 ((i - mon->nmaster) < srest ? 1 : 0) - (2 * client->border_w),
+             sh - (2 * client->border_w), 0);
+      sx += WIDTH(client) + iv;
     }
   }
 }
 
-static void bstackhoriz(Monitor *m) {
+static void bstackhoriz(Monitor *mon) {
   unsigned int i, n;
   int oh, ov, ih, iv;
   int mx = 0, my = 0, mh = 0, mw = 0;
   int sx = 0, sy = 0, sh = 0, sw = 0;
   float mfacts, sfacts;
   int mrest, srest;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
-  sx = mx = m->wx + ov;
-  sy = my = m->wy + oh;
-  mh = m->wh - 2 * oh;
-  sh = m->wh - 2 * oh - ih * (n - m->nmaster - 1);
-  mw = m->ww - 2 * ov - iv * (MIN(n, m->nmaster) - 1);
-  sw = m->ww - 2 * ov;
+  sx = mx = mon->win_x + ov;
+  sy = my = mon->win_y + oh;
+  mh = mon->win_h - 2 * oh;
+  sh = mon->win_h - 2 * oh - ih * (n - mon->nmaster - 1);
+  mw = mon->win_w - 2 * ov - iv * (MIN(n, mon->nmaster) - 1);
+  sw = mon->win_w - 2 * ov;
 
-  if (m->nmaster && n > m->nmaster) {
-    sh = (mh - ih) * (1 - m->mfact);
+  if (mon->nmaster && n > mon->nmaster) {
+    sh = (mh - ih) * (1 - mon->mfact);
     mh = mh - ih - sh;
     sy = my + mh + ih;
-    sh = m->wh - mh - 2 * oh - ih * (n - m->nmaster);
+    sh = mon->win_h - mh - 2 * oh - ih * (n - mon->nmaster);
   }
 
-  getfacts(m, mw, sh, &mfacts, &sfacts, &mrest, &srest);
+  getfacts(mon, mw, sh, &mfacts, &sfacts, &mrest, &srest);
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
-    if (i < m->nmaster) {
-      resize(c, mx, my,
-             mw * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw),
-             mh - (2 * c->bw), 0);
-      mx += WIDTH(c) + iv;
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++) {
+    if (i < mon->nmaster) {
+      resize(client, mx, my,
+             mw * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
+             mh - (2 * client->border_w), 0);
+      mx += WIDTH(client) + iv;
     } else {
-      resize(c, sx, sy, sw - (2 * c->bw),
-             sh * (c->cfact / sfacts) + ((i - m->nmaster) < srest ? 1 : 0) -
-                 (2 * c->bw),
+      resize(client, sx, sy, sw - (2 * client->border_w),
+             sh * (client->cfact / sfacts) +
+                 ((i - mon->nmaster) < srest ? 1 : 0) - (2 * client->border_w),
              0);
-      sy += HEIGHT(c) + ih;
+      sy += HEIGHT(client) + ih;
     }
   }
 }
@@ -217,7 +223,7 @@ static void bstackhoriz(Monitor *m) {
  * Centred master layout + gaps
  * https://dwm.suckless.org/patches/centeredmaster/
  */
-void centeredmaster(Monitor *m) {
+void centeredmaster(Monitor *mon) {
   unsigned int i, n;
   int oh, ov, ih, iv;
   int mx = 0, my = 0, mh = 0, mw = 0;
@@ -226,142 +232,152 @@ void centeredmaster(Monitor *m) {
   float mfacts = 0, lfacts = 0, rfacts = 0;
   int mtotal = 0, ltotal = 0, rtotal = 0;
   int mrest = 0, lrest = 0, rrest = 0;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
   /* initialize areas */
-  mx = m->wx + ov;
-  my = m->wy + oh;
-  mh = m->wh - 2 * oh - ih * ((!m->nmaster ? n : MIN(n, m->nmaster)) - 1);
-  mw = m->ww - 2 * ov;
-  lh = m->wh - 2 * oh - ih * (((n - m->nmaster) / 2) - 1);
-  rh = m->wh - 2 * oh -
-       ih * (((n - m->nmaster) / 2) - ((n - m->nmaster) % 2 ? 0 : 1));
+  mx = mon->win_x + ov;
+  my = mon->win_y + oh;
+  mh = mon->win_h - 2 * oh -
+       ih * ((!mon->nmaster ? n : MIN(n, mon->nmaster)) - 1);
+  mw = mon->win_w - 2 * ov;
+  lh = mon->win_h - 2 * oh - ih * (((n - mon->nmaster) / 2) - 1);
+  rh = mon->win_h - 2 * oh -
+       ih * (((n - mon->nmaster) / 2) - ((n - mon->nmaster) % 2 ? 0 : 1));
 
-  if (m->nmaster && n > m->nmaster) {
+  if (mon->nmaster && n > mon->nmaster) {
     /* go mfact box in the center if more than nmaster clients */
-    if (n - m->nmaster > 1) {
+    if (n - mon->nmaster > 1) {
       /* ||<-S->|<---M--->|<-S->|| */
-      mw = (m->ww - 2 * ov - 2 * iv) * m->mfact;
-      lw = (m->ww - mw - 2 * ov - 2 * iv) / 2;
-      rw = (m->ww - mw - 2 * ov - 2 * iv) - lw;
+      mw = (mon->win_w - 2 * ov - 2 * iv) * mon->mfact;
+      lw = (mon->win_w - mw - 2 * ov - 2 * iv) / 2;
+      rw = (mon->win_w - mw - 2 * ov - 2 * iv) - lw;
       mx += lw + iv;
     } else {
       /* ||<---M--->|<-S->|| */
-      mw = (mw - iv) * m->mfact;
+      mw = (mw - iv) * mon->mfact;
       lw = 0;
-      rw = m->ww - mw - iv - 2 * ov;
+      rw = mon->win_w - mw - iv - 2 * ov;
     }
-    lx = m->wx + ov;
-    ly = m->wy + oh;
+    lx = mon->win_x + ov;
+    ly = mon->win_y + oh;
     rx = mx + mw + iv;
-    ry = m->wy + oh;
+    ry = mon->win_y + oh;
   }
 
   /* calculate facts */
-  for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++) {
-    if (!m->nmaster || n < m->nmaster)
-      mfacts += c->cfact;
-    else if ((n - m->nmaster) % 2)
-      lfacts += c->cfact; // total factor of left hand stack area
+  for (n = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), n++) {
+    if (!mon->nmaster || n < mon->nmaster)
+      mfacts += client->cfact;
+    else if ((n - mon->nmaster) % 2)
+      lfacts += client->cfact; // total factor of left hand stack area
     else
-      rfacts += c->cfact; // total factor of right hand stack area
+      rfacts += client->cfact; // total factor of right hand stack area
   }
 
-  for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-    if (!m->nmaster || n < m->nmaster)
-      mtotal += mh * (c->cfact / mfacts);
-    else if ((n - m->nmaster) % 2)
-      ltotal += lh * (c->cfact / lfacts);
+  for (n = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), n++)
+    if (!mon->nmaster || n < mon->nmaster)
+      mtotal += mh * (client->cfact / mfacts);
+    else if ((n - mon->nmaster) % 2)
+      ltotal += lh * (client->cfact / lfacts);
     else
-      rtotal += rh * (c->cfact / rfacts);
+      rtotal += rh * (client->cfact / rfacts);
 
   mrest = mh - mtotal;
   lrest = lh - ltotal;
   rrest = rh - rtotal;
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
-    if (!m->nmaster || i < m->nmaster) {
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++) {
+    if (!mon->nmaster || i < mon->nmaster) {
       /* nmaster clients are stacked vertically, in the center of the screen */
-      resize(c, mx, my, mw - (2 * c->bw),
-             mh * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw), 0);
-      my += HEIGHT(c) + ih;
+      resize(client, mx, my, mw - (2 * client->border_w),
+             mh * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
+             0);
+      my += HEIGHT(client) + ih;
     } else {
       /* stack clients are stacked vertically */
-      if ((i - m->nmaster) % 2) {
-        resize(c, lx, ly, lw - (2 * c->bw),
-               lh * (c->cfact / lfacts) +
-                   ((i - 2 * m->nmaster) < 2 * lrest ? 1 : 0) - (2 * c->bw),
+      if ((i - mon->nmaster) % 2) {
+        resize(client, lx, ly, lw - (2 * client->border_w),
+               lh * (client->cfact / lfacts) +
+                   ((i - 2 * mon->nmaster) < 2 * lrest ? 1 : 0) -
+                   (2 * client->border_w),
                0);
-        ly += HEIGHT(c) + ih;
+        ly += HEIGHT(client) + ih;
       } else {
-        resize(c, rx, ry, rw - (2 * c->bw),
-               rh * (c->cfact / rfacts) +
-                   ((i - 2 * m->nmaster) < 2 * rrest ? 1 : 0) - (2 * c->bw),
+        resize(client, rx, ry, rw - (2 * client->border_w),
+               rh * (client->cfact / rfacts) +
+                   ((i - 2 * mon->nmaster) < 2 * rrest ? 1 : 0) -
+                   (2 * client->border_w),
                0);
-        ry += HEIGHT(c) + ih;
+        ry += HEIGHT(client) + ih;
       }
     }
   }
 }
 
-void centeredfloatingmaster(Monitor *m) {
+void centeredfloatingmaster(Monitor *mon) {
   unsigned int i, n;
   float mfacts, sfacts;
   float mivf = 1.0; // master inner vertical gap factor
   int oh, ov, ih, iv, mrest, srest;
   int mx = 0, my = 0, mh = 0, mw = 0;
   int sx = 0, sy = 0, sh = 0, sw = 0;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
-  sx = mx = m->wx + ov;
-  sy = my = m->wy + oh;
-  sh = mh = m->wh - 2 * oh;
-  mw = m->ww - 2 * ov - iv * (n - 1);
-  sw = m->ww - 2 * ov - iv * (n - m->nmaster - 1);
+  sx = mx = mon->win_x + ov;
+  sy = my = mon->win_y + oh;
+  sh = mh = mon->win_h - 2 * oh;
+  mw = mon->win_w - 2 * ov - iv * (n - 1);
+  sw = mon->win_w - 2 * ov - iv * (n - mon->nmaster - 1);
 
-  if (m->nmaster && n > m->nmaster) {
+  if (mon->nmaster && n > mon->nmaster) {
     mivf = 0.8;
     /* go mfact box in the center if more than nmaster clients */
-    if (m->ww > m->wh) {
-      mw = m->ww * m->mfact - iv * mivf * (MIN(n, m->nmaster) - 1);
-      mh = m->wh * 0.9;
+    if (mon->win_w > mon->win_h) {
+      mw = mon->win_w * mon->mfact - iv * mivf * (MIN(n, mon->nmaster) - 1);
+      mh = mon->win_h * 0.9;
     } else {
-      mw = m->ww * 0.9 - iv * mivf * (MIN(n, m->nmaster) - 1);
-      mh = m->wh * m->mfact;
+      mw = mon->win_w * 0.9 - iv * mivf * (MIN(n, mon->nmaster) - 1);
+      mh = mon->win_h * mon->mfact;
     }
-    mx = m->wx + (m->ww - mw) / 2;
-    my = m->wy + (m->wh - mh - 2 * oh) / 2;
+    mx = mon->win_x + (mon->win_w - mw) / 2;
+    my = mon->win_y + (mon->win_h - mh - 2 * oh) / 2;
 
-    sx = m->wx + ov;
-    sy = m->wy + oh;
-    sh = m->wh - 2 * oh;
+    sx = mon->win_x + ov;
+    sy = mon->win_y + oh;
+    sh = mon->win_h - 2 * oh;
   }
 
-  getfacts(m, mw, sw, &mfacts, &sfacts, &mrest, &srest);
+  getfacts(mon, mw, sw, &mfacts, &sfacts, &mrest, &srest);
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
-    if (i < m->nmaster) {
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++)
+    if (i < mon->nmaster) {
       /* nmaster clients are stacked horizontally, in the center of the screen
        */
-      resize(c, mx, my,
-             mw * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw),
-             mh - (2 * c->bw), 0);
-      mx += WIDTH(c) + iv * mivf;
+      resize(client, mx, my,
+             mw * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
+             mh - (2 * client->border_w), 0);
+      mx += WIDTH(client) + iv * mivf;
     } else {
       /* stack clients are stacked horizontally */
-      resize(c, sx, sy,
-             sw * (c->cfact / sfacts) + ((i - m->nmaster) < srest ? 1 : 0) -
-                 (2 * c->bw),
-             sh - (2 * c->bw), 0);
-      sx += WIDTH(c) + iv;
+      resize(client, sx, sy,
+             sw * (client->cfact / sfacts) +
+                 ((i - mon->nmaster) < srest ? 1 : 0) - (2 * client->border_w),
+             sh - (2 * client->border_w), 0);
+      sx += WIDTH(client) + iv;
     }
 }
 
@@ -369,43 +385,48 @@ void centeredfloatingmaster(Monitor *m) {
  * Deck layout + gaps
  * https://dwm.suckless.org/patches/deck/
  */
-void deck(Monitor *m) {
+void deck(Monitor *mon) {
   unsigned int i, n;
   int oh, ov, ih, iv;
   int mx = 0, my = 0, mh = 0, mw = 0;
   int sx = 0, sy = 0, sh = 0, sw = 0;
   float mfacts, sfacts;
   int mrest, srest;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
-  sx = mx = m->wx + ov;
-  sy = my = m->wy + oh;
-  sh = mh = m->wh - 2 * oh - ih * (MIN(n, m->nmaster) - 1);
-  sw = mw = m->ww - 2 * ov;
+  sx = mx = mon->win_x + ov;
+  sy = my = mon->win_y + oh;
+  sh = mh = mon->win_h - 2 * oh - ih * (MIN(n, mon->nmaster) - 1);
+  sw = mw = mon->win_w - 2 * ov;
 
-  if (m->nmaster && n > m->nmaster) {
-    sw = (mw - iv) * (1 - m->mfact);
+  if (mon->nmaster && n > mon->nmaster) {
+    sw = (mw - iv) * (1 - mon->mfact);
     mw = mw - iv - sw;
     sx = mx + mw + iv;
-    sh = m->wh - 2 * oh;
+    sh = mon->win_h - 2 * oh;
   }
 
-  getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+  getfacts(mon, mh, sh, &mfacts, &sfacts, &mrest, &srest);
 
-  if (n - m->nmaster > 0) /* override layout symbol */
-    snprintf(m->ltsymbol, sizeof m->ltsymbol, "D %d", n - m->nmaster);
+  if (n - mon->nmaster > 0) /* override layout symbol */
+    snprintf(mon->layout_symbol, sizeof mon->layout_symbol, "D %d",
+             n - mon->nmaster);
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
-    if (i < m->nmaster) {
-      resize(c, mx, my, mw - (2 * c->bw),
-             mh * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw), 0);
-      my += HEIGHT(c) + ih;
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++)
+    if (i < mon->nmaster) {
+      resize(client, mx, my, mw - (2 * client->border_w),
+             mh * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
+             0);
+      my += HEIGHT(client) + ih;
     } else {
-      resize(c, sx, sy, sw - (2 * c->bw), sh - (2 * c->bw), 0);
+      resize(client, sx, sy, sw - (2 * client->border_w),
+             sh - (2 * client->border_w), 0);
     }
 }
 
@@ -413,26 +434,27 @@ void deck(Monitor *m) {
  * Fibonacci layout + gaps
  * https://dwm.suckless.org/patches/fibonacci/
  */
-void fibonacci(Monitor *m, int s) {
+void fibonacci(Monitor *mon, int s) {
   unsigned int i, n;
   int nx, ny, nw, nh;
   int oh, ov, ih, iv;
   int nv, hrest = 0, wrest = 0, r = 1;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
-  nx = m->wx + ov;
-  ny = m->wy + oh;
-  nw = m->ww - 2 * ov;
-  nh = m->wh - 2 * oh;
+  nx = mon->win_x + ov;
+  ny = mon->win_y + oh;
+  nw = mon->win_w - 2 * ov;
+  nh = mon->win_h - 2 * oh;
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next)) {
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next)) {
     if (r) {
-      if ((i % 2 && (nh - ih) / 2 <= (bh + 2 * c->bw)) ||
-          (!(i % 2) && (nw - iv) / 2 <= (bh + 2 * c->bw))) {
+      if ((i % 2 && (nh - ih) / 2 <= (bar_h + 2 * client->border_w)) ||
+          (!(i % 2) && (nw - iv) / 2 <= (bar_h + 2 * client->border_w))) {
         r = 0;
       }
       if (r && i < n - 1) {
@@ -480,16 +502,18 @@ void fibonacci(Monitor *m, int s) {
       }
       if (i == 0) {
         if (n != 1) {
-          nw = (m->ww - iv - 2 * ov) - (m->ww - iv - 2 * ov) * (1 - m->mfact);
+          nw = (mon->win_w - iv - 2 * ov) -
+               (mon->win_w - iv - 2 * ov) * (1 - mon->mfact);
           wrest = 0;
         }
-        ny = m->wy + oh;
+        ny = mon->win_y + oh;
       } else if (i == 1)
-        nw = m->ww - nw - iv - 2 * ov;
+        nw = mon->win_w - nw - iv - 2 * ov;
       i++;
     }
 
-    resize(c, nx, ny, nw - (2 * c->bw), nh - (2 * c->bw), False);
+    resize(client, nx, ny, nw - (2 * client->border_w),
+           nh - (2 * client->border_w), False);
   }
 }
 
@@ -501,13 +525,13 @@ void spiral(Monitor *m) { fibonacci(m, 0); }
  * Gappless grid layout + gaps (ironically)
  * https://dwm.suckless.org/patches/gaplessgrid/
  */
-void gaplessgrid(Monitor *m) {
+void gaplessgrid(Monitor *mon) {
   unsigned int i, n;
   int x, y, cols, rows, ch, cw, cn, rn, rrest, crest; // counters
   int oh, ov, ih, iv;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
@@ -521,22 +545,23 @@ void gaplessgrid(Monitor *m) {
   rows = n / cols;
   cn = rn = 0; // reset column no, row no, client count
 
-  ch = (m->wh - 2 * oh - ih * (rows - 1)) / rows;
-  cw = (m->ww - 2 * ov - iv * (cols - 1)) / cols;
-  rrest = (m->wh - 2 * oh - ih * (rows - 1)) - ch * rows;
-  crest = (m->ww - 2 * ov - iv * (cols - 1)) - cw * cols;
-  x = m->wx + ov;
-  y = m->wy + oh;
+  ch = (mon->win_h - 2 * oh - ih * (rows - 1)) / rows;
+  cw = (mon->win_w - 2 * ov - iv * (cols - 1)) / cols;
+  rrest = (mon->win_h - 2 * oh - ih * (rows - 1)) - ch * rows;
+  crest = (mon->win_w - 2 * ov - iv * (cols - 1)) - cw * cols;
+  x = mon->win_x + ov;
+  y = mon->win_y + oh;
 
-  for (i = 0, c = nexttiled(m->clients); c; i++, c = nexttiled(c->next)) {
+  for (i = 0, client = nexttiled(mon->clients); client;
+       i++, client = nexttiled(client->next)) {
     if (i / rows + 1 > cols - n % cols) {
       rows = n / cols + 1;
-      ch = (m->wh - 2 * oh - ih * (rows - 1)) / rows;
-      rrest = (m->wh - 2 * oh - ih * (rows - 1)) - ch * rows;
+      ch = (mon->win_h - 2 * oh - ih * (rows - 1)) / rows;
+      rrest = (mon->win_h - 2 * oh - ih * (rows - 1)) - ch * rows;
     }
-    resize(c, x, y + rn * (ch + ih) + MIN(rn, rrest),
-           cw + (cn < crest ? 1 : 0) - 2 * c->bw,
-           ch + (rn < rrest ? 1 : 0) - 2 * c->bw, 0);
+    resize(client, x, y + rn * (ch + ih) + MIN(rn, rrest),
+           cw + (cn < crest ? 1 : 0) - 2 * client->border_w,
+           ch + (rn < rrest ? 1 : 0) - 2 * client->border_w, 0);
     rn++;
     if (rn >= rows) {
       rn = 0;
@@ -550,13 +575,13 @@ void gaplessgrid(Monitor *m) {
  * Gridmode layout + gaps
  * https://dwm.suckless.org/patches/gridmode/
  */
-void grid(Monitor *m) {
+void grid(Monitor *mon) {
   unsigned int i, n;
   int cx, cy, cw, ch, cc, cr, chrest, cwrest, cols, rows;
   int oh, ov, ih, iv;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
 
   /* grid dimensions */
   for (rows = 0; rows <= n / 2; rows++)
@@ -565,17 +590,18 @@ void grid(Monitor *m) {
   cols = (rows && (rows - 1) * rows >= n) ? rows - 1 : rows;
 
   /* window geoms (cell height/width) */
-  ch = (m->wh - 2 * oh - ih * (rows - 1)) / (rows ? rows : 1);
-  cw = (m->ww - 2 * ov - iv * (cols - 1)) / (cols ? cols : 1);
-  chrest = (m->wh - 2 * oh - ih * (rows - 1)) - ch * rows;
-  cwrest = (m->ww - 2 * ov - iv * (cols - 1)) - cw * cols;
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
+  ch = (mon->win_h - 2 * oh - ih * (rows - 1)) / (rows ? rows : 1);
+  cw = (mon->win_w - 2 * ov - iv * (cols - 1)) / (cols ? cols : 1);
+  chrest = (mon->win_h - 2 * oh - ih * (rows - 1)) - ch * rows;
+  cwrest = (mon->win_w - 2 * ov - iv * (cols - 1)) - cw * cols;
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++) {
     cc = i / rows;
     cr = i % rows;
-    cx = m->wx + ov + cc * (cw + iv) + MIN(cc, cwrest);
-    cy = m->wy + oh + cr * (ch + ih) + MIN(cr, chrest);
-    resize(c, cx, cy, cw + (cc < cwrest ? 1 : 0) - 2 * c->bw,
-           ch + (cr < chrest ? 1 : 0) - 2 * c->bw, False);
+    cx = mon->win_x + ov + cc * (cw + iv) + MIN(cc, cwrest);
+    cy = mon->win_y + oh + cr * (ch + ih) + MIN(cr, chrest);
+    resize(client, cx, cy, cw + (cc < cwrest ? 1 : 0) - 2 * client->border_w,
+           ch + (cr < chrest ? 1 : 0) - 2 * client->border_w, False);
   }
 }
 
@@ -583,8 +609,8 @@ void grid(Monitor *m) {
  * Horizontal grid layout + gaps
  * https://dwm.suckless.org/patches/horizgrid/
  */
-void horizgrid(Monitor *m) {
-  Client *c;
+void horizgrid(Monitor *mon) {
+  Client *client;
   unsigned int n, i;
   int oh, ov, ih, iv;
   int mx = 0, my = 0, mh = 0, mw = 0;
@@ -594,7 +620,7 @@ void horizgrid(Monitor *m) {
   int mrest, srest, mtotal = 0, stotal = 0;
 
   /* Count windows */
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
@@ -604,47 +630,51 @@ void horizgrid(Monitor *m) {
     ntop = n / 2;
     nbottom = n - ntop;
   }
-  sx = mx = m->wx + ov;
-  sy = my = m->wy + oh;
-  sh = mh = m->wh - 2 * oh;
-  sw = mw = m->ww - 2 * ov;
+  sx = mx = mon->win_x + ov;
+  sy = my = mon->win_y + oh;
+  sh = mh = mon->win_h - 2 * oh;
+  sw = mw = mon->win_w - 2 * ov;
 
   if (n > ntop) {
     sh = (mh - ih) / 2;
     mh = mh - ih - sh;
     sy = my + mh + ih;
-    mw = m->ww - 2 * ov - iv * (ntop - 1);
-    sw = m->ww - 2 * ov - iv * (nbottom - 1);
+    mw = mon->win_w - 2 * ov - iv * (ntop - 1);
+    sw = mon->win_w - 2 * ov - iv * (nbottom - 1);
   }
 
   /* calculate facts */
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++)
     if (i < ntop)
-      mfacts += c->cfact;
+      mfacts += client->cfact;
     else
-      sfacts += c->cfact;
+      sfacts += client->cfact;
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++)
     if (i < ntop)
-      mtotal += mh * (c->cfact / mfacts);
+      mtotal += mh * (client->cfact / mfacts);
     else
-      stotal += sw * (c->cfact / sfacts);
+      stotal += sw * (client->cfact / sfacts);
 
   mrest = mh - mtotal;
   srest = sw - stotal;
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++)
     if (i < ntop) {
-      resize(c, mx, my,
-             mw * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw),
-             mh - (2 * c->bw), 0);
-      mx += WIDTH(c) + iv;
+      resize(client, mx, my,
+             mw * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
+             mh - (2 * client->border_w), 0);
+      mx += WIDTH(client) + iv;
     } else {
-      resize(c, sx, sy,
-             sw * (c->cfact / sfacts) + ((i - ntop) < srest ? 1 : 0) -
-                 (2 * c->bw),
-             sh - (2 * c->bw), 0);
-      sx += WIDTH(c) + iv;
+      resize(client, sx, sy,
+             sw * (client->cfact / sfacts) + ((i - ntop) < srest ? 1 : 0) -
+                 (2 * client->border_w),
+             sh - (2 * client->border_w), 0);
+      sx += WIDTH(client) + iv;
     }
 }
 
@@ -652,17 +682,17 @@ void horizgrid(Monitor *m) {
  * nrowgrid layout + gaps
  * https://dwm.suckless.org/patches/nrowgrid/
  */
-void nrowgrid(Monitor *m) {
+void nrowgrid(Monitor *mon) {
   unsigned int n;
   int ri = 0, ci = 0;                  /* counters */
   int oh, ov, ih, iv;                  /* vanitygap settings */
   unsigned int cx, cy, cw, ch;         /* client geometry */
   unsigned int uw = 0, uh = 0, uc = 0; /* utilization trackers */
-  unsigned int cols, rows = m->nmaster + 1;
-  Client *c;
+  unsigned int cols, rows = mon->nmaster + 1;
+  Client *client;
 
   /* count clients */
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
 
   /* nothing to do here */
   if (n == 0)
@@ -679,11 +709,12 @@ void nrowgrid(Monitor *m) {
   /* define first row */
   cols = n / rows;
   uc = cols;
-  cy = m->wy + oh;
-  ch = (m->wh - 2 * oh - ih * (rows - 1)) / rows;
+  cy = mon->win_y + oh;
+  ch = (mon->win_h - 2 * oh - ih * (rows - 1)) / rows;
   uh = ch;
 
-  for (c = nexttiled(m->clients); c; c = nexttiled(c->next), ci++) {
+  for (client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), ci++) {
     if (ci == cols) {
       uw = 0;
       ci = 0;
@@ -692,58 +723,62 @@ void nrowgrid(Monitor *m) {
       /* next row */
       cols = (n - uc) / (rows - ri);
       uc += cols;
-      cy = m->wy + oh + uh + ih;
+      cy = mon->win_y + oh + uh + ih;
       uh += ch + ih;
     }
 
-    cx = m->wx + ov + uw;
-    cw = (m->ww - 2 * ov - uw) / (cols - ci);
+    cx = mon->win_x + ov + uw;
+    cw = (mon->win_w - 2 * ov - uw) / (cols - ci);
     uw += cw + iv;
 
-    resize(c, cx, cy, cw - (2 * c->bw), ch - (2 * c->bw), 0);
+    resize(client, cx, cy, cw - (2 * client->border_w),
+           ch - (2 * client->border_w), 0);
   }
 }
 
 /*
  * Default tile layout + gaps
  */
-static void tile(Monitor *m) {
+static void tile(Monitor *mon) {
   unsigned int i, n;
   int oh, ov, ih, iv;
   int mx = 0, my = 0, mh = 0, mw = 0;
   int sx = 0, sy = 0, sh = 0, sw = 0;
   float mfacts, sfacts;
   int mrest, srest;
-  Client *c;
+  Client *client;
 
-  getgaps(m, &oh, &ov, &ih, &iv, &n);
+  getgaps(mon, &oh, &ov, &ih, &iv, &n);
   if (n == 0)
     return;
 
-  sx = mx = m->wx + ov;
-  sy = my = m->wy + oh;
-  mh = m->wh - 2 * oh - ih * (MIN(n, m->nmaster) - 1);
-  sh = m->wh - 2 * oh - ih * (n - m->nmaster - 1);
-  sw = mw = m->ww - 2 * ov;
+  sx = mx = mon->win_x + ov;
+  sy = my = mon->win_y + oh;
+  mh = mon->win_h - 2 * oh - ih * (MIN(n, mon->nmaster) - 1);
+  sh = mon->win_h - 2 * oh - ih * (n - mon->nmaster - 1);
+  sw = mw = mon->win_w - 2 * ov;
 
-  if (m->nmaster && n > m->nmaster) {
-    sw = (mw - iv) * (1 - m->mfact);
+  if (mon->nmaster && n > mon->nmaster) {
+    sw = (mw - iv) * (1 - mon->mfact);
     mw = mw - iv - sw;
     sx = mx + mw + iv;
   }
 
-  getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+  getfacts(mon, mh, sh, &mfacts, &sfacts, &mrest, &srest);
 
-  for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
-    if (i < m->nmaster) {
-      resize(c, mx, my, mw - (2 * c->bw),
-             mh * (c->cfact / mfacts) + (i < mrest ? 1 : 0) - (2 * c->bw), 0);
-      my += HEIGHT(c) + ih;
-    } else {
-      resize(c, sx, sy, sw - (2 * c->bw),
-             sh * (c->cfact / sfacts) + ((i - m->nmaster) < srest ? 1 : 0) -
-                 (2 * c->bw),
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), i++)
+    if (i < mon->nmaster) {
+      resize(client, mx, my, mw - (2 * client->border_w),
+             mh * (client->cfact / mfacts) + (i < mrest ? 1 : 0) -
+                 (2 * client->border_w),
              0);
-      sy += HEIGHT(c) + ih;
+      my += HEIGHT(client) + ih;
+    } else {
+      resize(client, sx, sy, sw - (2 * client->border_w),
+             sh * (client->cfact / sfacts) +
+                 ((i - mon->nmaster) < srest ? 1 : 0) - (2 * client->border_w),
+             0);
+      sy += HEIGHT(client) + ih;
     }
 }

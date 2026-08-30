@@ -1,19 +1,22 @@
 void fibonacci(Monitor *mon, int s) {
   unsigned int i, n, nx, ny, nw, nh;
-  Client *c;
+  Client *client;
 
-  for (n = 0, c = nexttiled(mon->clients); c; c = nexttiled(c->next), n++)
+  for (n = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next), n++)
     ;
   if (n == 0)
     return;
 
-  nx = mon->wx;
+  nx = mon->win_x;
   ny = 0;
-  nw = mon->ww;
-  nh = mon->wh;
+  nw = mon->win_w;
+  nh = mon->win_h;
 
-  for (i = 0, c = nexttiled(mon->clients); c; c = nexttiled(c->next)) {
-    if ((i % 2 && nh / 2 > 2 * c->bw) || (!(i % 2) && nw / 2 > 2 * c->bw)) {
+  for (i = 0, client = nexttiled(mon->clients); client;
+       client = nexttiled(client->next)) {
+    if ((i % 2 && nh / 2 > 2 * client->border_w) ||
+        (!(i % 2) && nw / 2 > 2 * client->border_w)) {
       if (i < n - 1) {
         if (i % 2)
           nh /= 2;
@@ -41,13 +44,14 @@ void fibonacci(Monitor *mon, int s) {
       }
       if (i == 0) {
         if (n != 1)
-          nw = mon->ww * mon->mfact;
-        ny = mon->wy;
+          nw = mon->win_w * mon->mfact;
+        ny = mon->win_y;
       } else if (i == 1)
-        nw = mon->ww - nw;
+        nw = mon->win_w - nw;
       i++;
     }
-    resize(c, nx, ny, nw - 2 * c->bw, nh - 2 * c->bw, False);
+    resize(client, nx, ny, nw - 2 * client->border_w, nh - 2 * client->border_w,
+           False);
   }
 }
 
