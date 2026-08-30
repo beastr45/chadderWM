@@ -41,6 +41,7 @@
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
+#include <X11/XKBlib.h>
 #include <X11/Xft/Xft.h>
 #include <X11/Xlib-xcb.h>
 #include <xcb/res.h>
@@ -393,7 +394,7 @@ static void zoom(const Arg *arg);
 static void focusmaster(const Arg *arg);
 
 static pid_t getparentprocess(pid_t p);
-static int isdescprocess(pid_t p, pid_t c);
+static int isdescprocess(pid_t ancestor, pid_t descendant);
 static Client *swallowingclient(Window w);
 static Client *termforwin(const Client *client);
 static pid_t winpid(Window w);
@@ -667,7 +668,8 @@ void attachstack(Client *client) {
 /* dispatch mouse clicks on the bar, tab bar, or a client window */
 void buttonpress(XEvent *e) {
   unsigned int i, x, click;
-  int loop;
+  int btn; /* which tab button: 2 = close, 1 = next, 0 = prev (scanned from the
+              right) */
   Arg arg = {0};
   Client *client;
   Monitor *mon;
@@ -736,13 +738,13 @@ void buttonpress(XEvent *e) {
       arg.ui = i;
     } else {
       x = sel_mon->win_w - 2 * mon->gappov;
-      for (loop = 2; loop >= 0; loop--) {
-        x -= sel_mon->tab_btn_w[loop];
+      for (btn = 2; btn >= 0; btn--) {
+        x -= sel_mon->tab_btn_w[btn];
         if (ev->x > x)
           break;
       }
       if (ev->x >= x)
-        click = ClkTabPrev + loop;
+        click = ClkTabPrev + btn;
     }
   } else if ((client = wintoclient(ev->window))) {
     //    focus(client);
@@ -778,12 +780,13 @@ void checkotherwm(void) {
 /* unmanage every client and free all resources before exit */
 void cleanup(void) {
   Arg a = {.ui = ~0};
-  Layout foo = {"", NULL};
+  Layout noop_layout = {
+      "", NULL}; /* NULL arrange fn: nothing re-tiles during teardown */
   Monitor *mon;
   size_t i;
 
   view(&a);
-  sel_mon->layout[sel_mon->sel_layout] = &foo;
+  sel_mon->layout[sel_mon->sel_layout] = &noop_layout;
   for (mon = monitors; mon; mon = mon->next)
     while (mon->stack)
       unmanage(mon->stack, 0);
@@ -946,7 +949,7 @@ void configurenotify(XEvent *e) {
   Monitor *mon;
   Client *client;
   XConfigureEvent *ev = &e->xconfigure;
-  int dirty;
+  int dirty; /* whether the screen resolution actually changed */
 
   /* TODO: updategeom handling sucks, needs to be simplified */
   if (ev->window == root) {
@@ -954,6 +957,7 @@ void configurenotify(XEvent *e) {
     screen_w = ev->width;
     screen_h = ev->height;
     if (updategeom() || dirty) {
+      system("$HOME/.fehbg &");
       drw_resize(drw, screen_w, bar_h);
       updatebars();
       for (mon = monitors; mon; mon = mon->next) {
@@ -1152,12 +1156,13 @@ int drawstatusbar(Monitor *mon, int bar_h, char *status_text) {
   int ret, i, w, x, len;
   short isCode = 0;
   char *text;
-  char *p;
+  char *text_start; /* the malloc'd copy; `text` is walked past markup, then
+                       restored */
 
   len = strlen(status_text) + 1;
   if (!(text = (char *)malloc(sizeof(char) * len)))
     die("malloc");
-  p = text;
+  text_start = text;
   memcpy(text, status_text, len);
 
   /* compute width of the status text */
@@ -1183,7 +1188,7 @@ int drawstatusbar(Monitor *mon, int bar_h, char *status_text) {
     w += TEXTW(text) - lr_pad;
   else
     isCode = 0;
-  text = p;
+  text = text_start;
 
   w += horizpadbar;
   if (floatbar) {
@@ -1261,7 +1266,7 @@ int drawstatusbar(Monitor *mon, int bar_h, char *status_text) {
   }
 
   drw_setscheme(drw, scheme[SchemeNorm]);
-  free(p);
+  free(text_start);
 
   return ret;
 }
@@ -1577,17 +1582,19 @@ void dragmfact(const Arg *arg) {
 
 /* draw one monitor's bar: tags, layout symbol, launchers, title, status */
 void drawbar(Monitor *mon) {
-  int x, y = borderpx, w, status_w = 0, stw = 0;
-  int bh_n = bar_h - borderpx * 2;
-  int mw;
+  int x, y = borderpx, w, status_w = 0, stw = 0; /* stw: system tray width */
+  int bh_n = bar_h - borderpx * 2; /* bh_n: bar height, borders excluded */
+  int mw;                          /* mw: bar width available to draw in */
   if (floatbar) {
     mw = mon->win_w - mon->gappov * 2 - borderpx * 2;
   } else {
     mw = mon->win_w - borderpx * 2;
   }
+  /* boxs/boxw: "box start" offset and "box width" of the floating-window marker
+   */
   int boxs = drw->fonts->h / 9;
   int boxw = drw->fonts->h / 6 + 2;
-  unsigned int i, occ = 0, urg = 0;
+  unsigned int i, occupied_tags = 0, urgent_tags = 0;
   Client *client;
 
   XSetForeground(drw->display, drw->gc, border_clr.pixel);
@@ -1612,28 +1619,28 @@ void drawbar(Monitor *mon) {
 
   resizebarwin(mon);
   for (client = mon->clients; client; client = client->next) {
-    occ |= client->tags;
+    occupied_tags |= client->tags;
     if (client->is_urgent)
-      urg |= client->tags;
+      urgent_tags |= client->tags;
   }
   x = borderpx;
   for (i = 0; i < LENGTH(tags); i++) {
     w = TEXTW(tags[i]);
-    drw_setscheme(
-        drw,
-        scheme[occ & 1 << i ? (mon->colorful_tag ? tagschemes[i] : SchemeSel)
-                            : SchemeTag]);
-    drw_text(drw, x, y, w, bh_n, lr_pad / 2, tags[i], urg & 1 << i);
+    drw_setscheme(drw,
+                  scheme[occupied_tags & 1 << i
+                             ? (mon->colorful_tag ? tagschemes[i] : SchemeSel)
+                             : SchemeTag]);
+    drw_text(drw, x, y, w, bh_n, lr_pad / 2, tags[i], urgent_tags & 1 << i);
     if (ulineall ||
         mon->tagset[mon->sel_tags] &
             1 << i) /* if there are conflicts, just move these lines directly
                        underneath both 'drw_setscheme' and 'drw_text' :) */
       drw_rect(drw, x + ulinepad, bh_n - ulinestroke - ulinevoffset,
                w - (ulinepad * 2), ulinestroke, 1, 0);
-    /*if (occ & 1 << i)
+    /*if (occupied_tags & 1 << i)
       drw_rect(drw, x + boxs, y + boxs, boxw, boxw,
                mon == sel_mon && sel_mon->sel && sel_mon->sel->tags & 1 << i,
-               urg & 1 << i); */
+               urgent_tags & 1 << i); */
     x += w;
   }
   w = TEXTW(mon->layout_symbol);
@@ -1642,7 +1649,8 @@ void drawbar(Monitor *mon) {
 
   for (i = 0; i < LENGTH(launchers); i++) {
     w = TEXTW(launchers[i].name);
-    drw_text(drw, x, 0, w, bar_h, lr_pad / 2, launchers[i].name, urg & 1 << i);
+    drw_text(drw, x, 0, w, bar_h, lr_pad / 2, launchers[i].name,
+             urgent_tags & 1 << i);
     x += w;
   }
 
@@ -1695,12 +1703,14 @@ Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
     return None;
   }
 
-  unsigned long *bstp = NULL;
+  /* best_icon points at the pixel data of the closest-sized icon seen so far;
+   * best_diff is how far its larger dimension is from ICONSIZE */
+  unsigned long *best_icon = NULL;
   uint32_t w, h, sz;
   {
     unsigned long *i;
     const unsigned long *end = p + n;
-    uint32_t bstd = UINT32_MAX, d, mon;
+    uint32_t best_diff = UINT32_MAX, diff, max_dim;
     for (i = p; i < end - 1; i += sz) {
       if ((w = *i++) >= 16384 || (h = *i++) >= 16384) {
         XFree(p);
@@ -1708,12 +1718,13 @@ Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
       }
       if ((sz = w * h) > end - i)
         break;
-      if ((mon = w > h ? w : h) >= ICONSIZE && (d = mon - ICONSIZE) < bstd) {
-        bstd = d;
-        bstp = i;
+      if ((max_dim = w > h ? w : h) >= ICONSIZE &&
+          (diff = max_dim - ICONSIZE) < best_diff) {
+        best_diff = diff;
+        best_icon = i;
       }
     }
-    if (!bstp) {
+    if (!best_icon) {
       for (i = p; i < end - 1; i += sz) {
         if ((w = *i++) >= 16384 || (h = *i++) >= 16384) {
           XFree(p);
@@ -1721,19 +1732,19 @@ Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
         }
         if ((sz = w * h) > end - i)
           break;
-        if ((d = ICONSIZE - (w > h ? w : h)) < bstd) {
-          bstd = d;
-          bstp = i;
+        if ((diff = ICONSIZE - (w > h ? w : h)) < best_diff) {
+          best_diff = diff;
+          best_icon = i;
         }
       }
     }
-    if (!bstp) {
+    if (!best_icon) {
       XFree(p);
       return None;
     }
   }
 
-  if ((w = *(bstp - 2)) == 0 || (h = *(bstp - 1)) == 0) {
+  if ((w = *(best_icon - 2)) == 0 || (h = *(best_icon - 1)) == 0) {
     XFree(p);
     return None;
   }
@@ -1753,11 +1764,12 @@ Picture geticonprop(Window win, unsigned int *picw, unsigned int *pich) {
   *picw = icw;
   *pich = ich;
 
-  uint32_t i, *bstp32 = (uint32_t *)bstp;
+  uint32_t i, *best_icon32 = (uint32_t *)best_icon;
   for (sz = w * h, i = 0; i < sz; ++i)
-    bstp32[i] = prealpha(bstp[i]);
+    best_icon32[i] = prealpha(best_icon[i]);
 
-  Picture ret = drw_picture_create_resized(drw, (char *)bstp, w, h, icw, ich);
+  Picture ret =
+      drw_picture_create_resized(drw, (char *)best_icon, w, h, icw, ich);
   XFree(p);
 
   return ret;
@@ -1777,7 +1789,10 @@ int fake_signal(void) {
   char indicator[9] = "fsignal:";
   char str_sig[50];
   char param[16];
-  int i, len_str_sig, n, paramn;
+  /* nmatched: number of tokens sscanf matched. sig_end / type_end: byte offsets
+   * (via %n) just past the signal name and just past the type token, so
+   * (type_end - sig_end) is the length of the type token. */
+  int i, sig_end, type_end, nmatched;
   size_t len_fsignal, len_indicator = strlen(indicator);
   Arg arg;
 
@@ -1789,26 +1804,25 @@ int fake_signal(void) {
     if (len_indicator > len_fsignal
             ? 0
             : strncmp(indicator, fsignal, len_indicator) == 0) {
-      paramn = sscanf(fsignal + len_indicator, "%s%n%s%n", str_sig,
-                      &len_str_sig, param, &n);
+      nmatched = sscanf(fsignal + len_indicator, "%s%n%s%n", str_sig, &sig_end,
+                        param, &type_end);
 
-      if (paramn == 1)
+      if (nmatched == 1)
         arg = (Arg){0};
-      else if (paramn > 2)
+      else if (nmatched > 2)
         return 1;
-      else if (strncmp(param, "i", n - len_str_sig) == 0)
-        sscanf(fsignal + len_indicator + n, "%i", &(arg.i));
-      else if (strncmp(param, "ui", n - len_str_sig) == 0)
-        sscanf(fsignal + len_indicator + n, "%u", &(arg.ui));
-      else if (strncmp(param, "f", n - len_str_sig) == 0)
-        sscanf(fsignal + len_indicator + n, "%f", &(arg.f));
+      else if (strncmp(param, "i", type_end - sig_end) == 0)
+        sscanf(fsignal + len_indicator + type_end, "%i", &(arg.i));
+      else if (strncmp(param, "ui", type_end - sig_end) == 0)
+        sscanf(fsignal + len_indicator + type_end, "%u", &(arg.ui));
+      else if (strncmp(param, "f", type_end - sig_end) == 0)
+        sscanf(fsignal + len_indicator + type_end, "%f", &(arg.f));
       else
         return 1;
 
       // Check if a signal was found, and if so handle it
       for (i = 0; i < LENGTH(signals); i++)
-        if (strncmp(str_sig, signals[i].sig, len_str_sig) == 0 &&
-            signals[i].func)
+        if (strncmp(str_sig, signals[i].sig, sig_end) == 0 && signals[i].func)
           signals[i].func(&(arg));
 
       // A fake signal was sent
@@ -2379,7 +2393,7 @@ void keypress(XEvent *e) {
   XKeyEvent *ev;
 
   ev = &e->xkey;
-  keysym = XKeycodeToKeysym(display, (KeyCode)ev->keycode, 0);
+  keysym = XkbKeycodeToKeysym(display, (KeyCode)ev->keycode, 0, 0);
   for (i = 0; i < LENGTH(keys); i++)
     if (keysym == keys[i].keysym &&
         CLEANMASK(keys[i].mod) == CLEANMASK(ev->state) && keys[i].func)
@@ -3011,12 +3025,13 @@ pid_t getparentprocess(pid_t p) {
   return (pid_t)v;
 }
 
-/* test whether one process is a descendant of another */
-int isdescprocess(pid_t p, pid_t client) {
-  while (p != client && client != 0)
-    client = getparentprocess(client);
+/* true if process `descendant` is (transitively) a child of process `ancestor`
+ */
+int isdescprocess(pid_t ancestor, pid_t descendant) {
+  while (ancestor != descendant && descendant != 0)
+    descendant = getparentprocess(descendant);
 
-  return (int)client;
+  return (int)descendant;
 }
 
 /* find the terminal client that spawned the given window, if any */
@@ -3055,30 +3070,30 @@ Client *swallowingclient(Window w) {
 
 /* return the tiled client that overlaps a rectangle the most */
 Client *recttoclient(int x, int y, int w, int h) {
-  Client *client, *r = NULL;
-  int a, area = 0;
+  Client *client, *best = NULL;
+  int overlap, max_overlap = 0;
 
   for (client = nexttiled(sel_mon->clients); client;
        client = nexttiled(client->next)) {
-    if ((a = INTERSECTC(x, y, w, h, client)) > area) {
-      area = a;
-      r = client;
+    if ((overlap = INTERSECTC(x, y, w, h, client)) > max_overlap) {
+      max_overlap = overlap;
+      best = client;
     }
   }
-  return r;
+  return best;
 }
 
 /* return the monitor that overlaps a rectangle the most */
 Monitor *recttomon(int x, int y, int w, int h) {
-  Monitor *mon, *r = sel_mon;
-  int a, area = 0;
+  Monitor *mon, *best = sel_mon;
+  int overlap, max_overlap = 0;
 
   for (mon = monitors; mon; mon = mon->next)
-    if ((a = INTERSECT(x, y, w, h, mon)) > area) {
-      area = a;
-      r = mon;
+    if ((overlap = INTERSECT(x, y, w, h, mon)) > max_overlap) {
+      max_overlap = overlap;
+      best = mon;
     }
-  return r;
+  return best;
 }
 
 /* unlink a systray icon from the tray and free it */
@@ -3705,19 +3720,19 @@ void setclienttagprop(Client *client) {
 /* snapshot the currently viewed tags' contents for use as tag previews */
 void switchtag(void) {
   int i;
-  unsigned int occ = 0;
+  unsigned int occupied_tags = 0;
   Client *client;
   Imlib_Image image;
 
   for (client = sel_mon->clients; client; client = client->next)
-    occ |= client->tags;
+    occupied_tags |= client->tags;
   for (i = 0; i < LENGTH(tags); i++) {
     if (sel_mon->tagset[sel_mon->sel_tags] & 1 << i) {
       if (sel_mon->tagmap[i] != 0) {
         XFreePixmap(display, sel_mon->tagmap[i]);
         sel_mon->tagmap[i] = 0;
       }
-      if (occ & 1 << i && tag_preview) {
+      if (occupied_tags & 1 << i && tag_preview) {
         image = imlib_create_image(screen_w, screen_h);
         imlib_context_set_image(image);
         imlib_context_set_display(display);
@@ -4043,7 +4058,7 @@ void updatepreview(void) {
 /* recompute a monitor's bar / tab position and shrink its usable area */
 void updatebarpos(Monitor *mon) {
   Client *client;
-  int nvis = 0;
+  int nvis = 0; /* nvis: number of visible clients on this monitor */
 
   mon->win_y = mon->mon_y;
   mon->win_h = mon->mon_h;
@@ -4103,6 +4118,7 @@ void updateclientlist() {
 void updatecurrentdesktop(void) {
   long rawdata[] = {sel_mon->tagset[sel_mon->sel_tags]};
   int i = 0;
+  /* i ends as the index of the highest set tag bit = current desktop number */
   while (*rawdata >> (i + 1)) {
     i++;
   }
@@ -4117,23 +4133,24 @@ int updategeom(void) {
 
 #ifdef XINERAMA
   if (XineramaIsActive(display)) {
-    int i, j, n, nn;
+    int i, j, nmons,
+        nscreens; /* count of existing monitors / of unique screens */
     Client *client;
     Monitor *mon;
-    XineramaScreenInfo *info = XineramaQueryScreens(display, &nn);
+    XineramaScreenInfo *info = XineramaQueryScreens(display, &nscreens);
     XineramaScreenInfo *unique = NULL;
 
-    for (n = 0, mon = monitors; mon; mon = mon->next, n++)
+    for (nmons = 0, mon = monitors; mon; mon = mon->next, nmons++)
       ;
     /* only consider unique geometries as separate screens */
-    unique = ecalloc(nn, sizeof(XineramaScreenInfo));
-    for (i = 0, j = 0; i < nn; i++)
+    unique = ecalloc(nscreens, sizeof(XineramaScreenInfo));
+    for (i = 0, j = 0; i < nscreens; i++)
       if (isuniquegeom(unique, j, &info[i]))
         memcpy(&unique[j++], &info[i], sizeof(XineramaScreenInfo));
     XFree(info);
-    nn = j;
-    /* new monitors if nn > n */
-    for (i = n; i < nn; i++) {
+    nscreens = j;
+    /* add monitors if there are now more screens than monitors */
+    for (i = nmons; i < nscreens; i++) {
       for (mon = monitors; mon && mon->next; mon = mon->next)
         ;
       if (mon)
@@ -4141,8 +4158,8 @@ int updategeom(void) {
       else
         monitors = createmon();
     }
-    for (i = 0, mon = monitors; i < nn && mon; mon = mon->next, i++)
-      if (i >= n || unique[i].x_org != mon->mon_x ||
+    for (i = 0, mon = monitors; i < nscreens && mon; mon = mon->next, i++)
+      if (i >= nmons || unique[i].x_org != mon->mon_x ||
           unique[i].y_org != mon->mon_y || unique[i].width != mon->mon_w ||
           unique[i].height != mon->mon_h) {
         dirty = 1;
@@ -4153,8 +4170,8 @@ int updategeom(void) {
         mon->mon_h = mon->win_h = unique[i].height;
         updatebarpos(mon);
       }
-    /* removed monitors if n > nn */
-    for (i = nn; i < n; i++) {
+    /* drop monitors if there are now fewer screens than monitors */
+    for (i = nscreens; i < nmons; i++) {
       for (mon = monitors; mon && mon->next; mon = mon->next)
         ;
       while ((client = mon->clients)) {

@@ -1,5 +1,4 @@
 *.o
-config.h
 chadwm
 .cache
 compile_commands.json
