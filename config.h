@@ -1,4 +1,6 @@
 /* See LICENSE file for copyright and license details. */
+#ifndef CONFIG_H
+#define CONFIG_H
 
 #include <X11/X.h>
 #include <X11/XF86keysym.h>
@@ -83,7 +85,7 @@ static const char *colors[][3]      = {
 };
 
 /* tagging */
-static char *tags[] = { "󰋜", "󱍓", "󰖟", "", "󰇰", "6", "7", "󰊗", "󰒲" };
+static char *tags[] = { "󰋜", "󱍓", "󰖟", "", "󰇰", "󱉐", "7", "󰊗", "󰒲" };
 
 static const char* eww[] = { "eww", "open" , "eww", NULL };
 
@@ -247,8 +249,11 @@ static const Key keys[] = {
 
     // kill dwm
     //default kill replaced with kill from exit dwm patch
-    /* { MODKEY|ControlMask|ShiftMask,     XK_q,       quit,           {0} }, */
-	{ MODKEY|ShiftMask,             XK_q,      spawn,          SHCMD("~/.config/rofi/scripts/powermenu_t3") },
+
+    { MODKEY|ShiftMask,                 XK_q,       spawn,           SHCMD("~/.config/rofi/scripts/powermenu_t3") },
+    { MODKEY|ShiftMask,                 XK_r,       quit, {1} },   // restart in place
+    //if you also want a plain quit:
+    // { MODKEY|ControlMask|ShiftMask,     XK_q,       quit,           {0} },
 
     // kill window
     { MODKEY,                           XK_q,       killclient,     {0} },
@@ -411,3 +416,5 @@ static Signal signals[] = {
 	{ "setlayoutex",    setlayoutex },
 };
 /* clang-format on */
+
+#endif /* CONFIG_H */

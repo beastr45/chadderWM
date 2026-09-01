@@ -311,6 +311,8 @@ static void placemouse(const Arg *arg);
 static void pop(Client *client);
 static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
+static void sighup(int unused);
+static void sigterm(int unused);
 static Client *recttoclient(int x, int y, int w, int h);
 static Monitor *recttomon(int x, int y, int w, int h);
 static void removesystrayicon(Client *i);
@@ -430,6 +432,7 @@ static void (*event_handlers[LASTEvent])(XEvent *) = {
     [UnmapNotify] = unmapnotify};
 static Atom wm_atom[WMLast], net_atom[NetLast], xembed_atom[XLast];
 static int running = 1;
+static int restart = 0;
 static Cur *cursor[CurLast];
 static Clr **scheme, border_clr;
 static Display *display;
@@ -2086,7 +2089,7 @@ void drawtab(Monitor *mon) {
 
 /* focus the client or monitor the pointer just entered */
 void enternotify(XEvent *e) {
-  return;
+  // return;
   Client *client;
   Monitor *mon;
   XCrossingEvent *ev = &e->xcrossing;
@@ -2099,9 +2102,11 @@ void enternotify(XEvent *e) {
   if (mon != sel_mon) {
     unfocus(sel_mon->sel, 1);
     sel_mon = mon;
+    focus(client);
   } else if (!client || client == sel_mon->sel)
     return;
-  focus(client);
+  // Disable client focus on mouse pointer as its a bit annoying.
+  //  focus(client);
 }
 
 /* redraw a bar when its window is exposed */
@@ -2933,7 +2938,26 @@ void propertynotify(XEvent *e) {
 }
 
 /* stop the main event loop */
-void quit(const Arg *arg) { running = 0; }
+// void quit(const Arg *arg) { running = 0; }
+/* stop the main event loop; arg->i != 0 asks main() to re-exec dwm afterwards
+ */
+void quit(const Arg *arg) {
+  if (arg->i)
+    restart = 1;
+  running = 0;
+}
+
+/* SIGHUP: restart dwm in place (re-exec after cleanup) */
+void sighup(int unused) {
+  Arg a = {.i = 1};
+  quit(&a);
+}
+
+/* SIGTERM: exit cleanly (e.g. on logout) instead of being killed */
+void sigterm(int unused) {
+  Arg a = {.i = 0};
+  quit(&a);
+}
 
 /* return the PID that owns an X window */
 pid_t winpid(Window w) {
@@ -3617,6 +3641,8 @@ void setup(void) {
                   LeaveWindowMask | StructureNotifyMask | PropertyChangeMask;
   XChangeWindowAttributes(display, root, CWEventMask | CWCursor, &wa);
   XSelectInput(display, root, wa.event_mask);
+  signal(SIGHUP, sighup);
+  signal(SIGTERM, sigterm);
   grabkeys();
   focus(NULL);
 }
@@ -4615,6 +4641,8 @@ int main(int argc, char *argv[]) {
   scan();
   run();
   cleanup();
+  if (restart)
+    execvp(argv[0], argv);
   XCloseDisplay(display);
   return EXIT_SUCCESS;
 }
