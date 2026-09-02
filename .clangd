@@ -1,0 +1,12 @@
+# Stopgap: config.h / functions.h are #included partway down dwm.c, so on their
+# own clangd has no context for Layout, Arg, MODKEY, tile, ... -include'ing
+# dwm.c gives them that context; their include guards stop the bodies being
+# parsed twice, and -ferror-limit=0 stops a spurious "too many errors" while the
+# big dwm.c preamble is built.
+#
+# This is a workaround, not a clean fix -- see the notes about extracting a
+# shared dwm.h header, which would let config.h stand on its own.
+If:
+  PathMatch: [.*config\.h, .*functions\.h]
+CompileFlags:
+  Add: [-include, dwm.c, -ferror-limit=0, -Wno-unused-macros, -Wno-unused-const-variable]
