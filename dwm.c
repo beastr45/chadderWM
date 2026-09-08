@@ -44,6 +44,7 @@
 #include <X11/XKBlib.h>
 #include <X11/Xft/Xft.h>
 #include <X11/Xlib-xcb.h>
+#include <X11/extensions/Xrender.h>
 #include <xcb/res.h>
 #ifdef __OpenBSD__
 #include <kvm.h>
@@ -188,6 +189,15 @@ typedef struct {
 
 typedef struct Monitor Monitor;
 typedef struct Client Client;
+
+/* per-client state for the "preview all windows" overlay (togglepreviewallwin) */
+typedef struct {
+  XImage *orig_image;   /* full-size snapshot taken via XRender */
+  XImage *scaled_image; /* down-scaled copy shown in the overlay */
+  Window win;           /* overlay window; created lazily, reused across toggles */
+  unsigned int x, y;    /* overlay window position, filled in by the layout pass */
+} Preview;
+
 struct Client {
   char name[256];
   float min_aspect, max_aspect;
@@ -208,6 +218,7 @@ struct Client {
   Client *swallowing;
   Monitor *mon;
   Window win;
+  Preview pre;
 };
 
 typedef struct {
@@ -393,6 +404,20 @@ static int xerrordummy(Display *display, XErrorEvent *ee);
 static int xerrorstart(Display *display, XErrorEvent *ee);
 static void zoom(const Arg *arg);
 
+/* "preview all windows" overlay */
+static void togglepreviewallwin(const Arg *arg);
+static void previewallwin_highlight(int idx, Monitor *m);
+static void previewallwin_layout(unsigned int n, Monitor *m, unsigned int gappo,
+                                 unsigned int gappi);
+static XImage *previewallwin_snapshot(Client *c);
+static XImage *previewallwin_scaledown(XImage *orig, unsigned int cw,
+                                       unsigned int ch);
+static void previewallwin_free_images(Monitor *m);
+static void previewallwin_forget(Client *c);
+static void previewallwin_draw(Client *c, int idx);
+static void previewallwin_label(int idx, char *buf);
+static int previewallwin_label_index(KeySym ks);
+
 static void focusmaster(const Arg *arg);
 
 static pid_t getparentprocess(pid_t p);
@@ -433,6 +458,7 @@ static void (*event_handlers[LASTEvent])(XEvent *) = {
 static Atom wm_atom[WMLast], net_atom[NetLast], xembed_atom[XLast];
 static int running = 1;
 static int restart = 0;
+static int previewallwin = 0; /* non-zero while the preview overlay is up */
 static Cur *cursor[CurLast];
 static Clr **scheme, border_clr;
 static Display *display;
@@ -1964,6 +1990,7 @@ void swallow(Client *p, Client *client) {
 void unswallow(Client *client) {
   client->win = client->swallowing->win;
 
+  previewallwin_forget(client->swallowing);
   free(client->swallowing);
   client->swallowing = NULL;
 
@@ -3960,6 +3987,7 @@ void unmanage(Client *client, int destroyed) {
 
   Client *s = swallowingclient(client->win);
   if (s) {
+    previewallwin_forget(s->swallowing);
     free(s->swallowing);
     s->swallowing = NULL;
     arrange(mon);
@@ -3970,6 +3998,9 @@ void unmanage(Client *client, int destroyed) {
   detach(client);
   detachstack(client);
   freeicon(client);
+
+  /* drop any cached "preview all windows" overlay window/images for this client */
+  previewallwin_forget(client);
 
   if (!destroyed) {
     wc.border_width = client->old_border_w;
@@ -4612,6 +4643,554 @@ void zoom(const Arg *arg) {
       !(client = nexttiled(client->next)))
     return;
   pop(client);
+}
+
+/* ---------------------------------------------------------------------------
+ * "preview all windows" overlay
+ *
+ * MOD+a snapshots every client on the selected monitor with XRender, hides the
+ * real windows and shows scaled thumbnails in a grid. Navigate with h/j/k/l or
+ * the arrows, pick with Return / left-click, cancel with Escape or q. Each
+ * thumbnail is also badged with a key (1-9, 0, then a-z) -- holding Alt and
+ * pressing it jumps straight to that window, gnome-dock-style, without
+ * walking the grid first. Tab jumps to the most-recently-used other window
+ * (focus history, following it across tags -- not the tag-history toggle
+ * MOD+Tab does). This runs its own modal XNextEvent loop (like
+ * movemouse/resizemouse) rather than going through the main event dispatch.
+ * ------------------------------------------------------------------------- */
+
+#define PREVIEW_GAP_OUTER 20 /* margin between the thumbnail grid and screen edge */
+#define PREVIEW_GAP_INNER 15 /* gap between adjacent thumbnails */
+#define PREVIEW_LABEL_PAD 4  /* padding around the glyph in each Alt+key badge */
+
+/* set the border of the idx-th thumbnail to SchemeSel, the rest to SchemeNorm */
+void previewallwin_highlight(int idx, Monitor *m) {
+  Client *c;
+  int i = 0;
+
+  for (c = m->clients; c; c = c->next, i++)
+    XSetWindowBorder(display, c->pre.win,
+                     scheme[i == idx ? SchemeSel : SchemeNorm][ColBorder].pixel);
+}
+
+/* place n thumbnails in the monitor's usable area and build their scaled_image;
+ * gappo is the outer margin, gappi the gap between thumbnails */
+void previewallwin_layout(unsigned int n, Monitor *m, unsigned int gappo,
+                          unsigned int gappi) {
+  unsigned int i, j, cols, rows;
+  int cx, cy, cw, ch, cmaxh;
+  Client *c, *rowstart;
+
+  if (n == 1) {
+    c = m->clients;
+    cw = MAX(1, (m->win_w - 2 * (int)gappo) * 0.8);
+    ch = MAX(1, (m->win_h - 2 * (int)gappo) * 0.9);
+    c->pre.scaled_image = previewallwin_scaledown(c->pre.orig_image, cw, ch);
+    if (!c->pre.scaled_image)
+      return;
+    c->pre.x = m->win_x + (m->win_w - c->pre.scaled_image->width) / 2;
+    c->pre.y = m->win_y + (m->win_h - c->pre.scaled_image->height) / 2;
+    return;
+  }
+  if (n == 2) {
+    c = m->clients;
+    cw = MAX(1, (m->win_w - 2 * (int)gappo - (int)gappi) / 2);
+    ch = MAX(1, (m->win_h - 2 * (int)gappo) * 0.7);
+    c->pre.scaled_image = previewallwin_scaledown(c->pre.orig_image, cw, ch);
+    c->next->pre.scaled_image =
+        previewallwin_scaledown(c->next->pre.orig_image, cw, ch);
+    if (!c->pre.scaled_image || !c->next->pre.scaled_image)
+      return;
+    c->pre.x = m->win_x + (m->win_w - c->pre.scaled_image->width - (int)gappi -
+                           c->next->pre.scaled_image->width) /
+                              2;
+    c->pre.y = m->win_y + (m->win_h - c->pre.scaled_image->height) / 2;
+    c->next->pre.x = c->pre.x + c->pre.scaled_image->width + gappi;
+    c->next->pre.y =
+        m->win_y + (m->win_h - c->next->pre.scaled_image->height) / 2;
+    return;
+  }
+
+  for (cols = 0; cols <= n / 2; cols++)
+    if (cols * cols >= n)
+      break;
+  rows = (cols && (cols - 1) * cols >= n) ? cols - 1 : cols;
+  rows = MAX(rows, 1);
+  cols = MAX(cols, 1);
+  /* split the usable area into cols x rows cells, subtracting the outer margin
+   * and the inter-cell gaps so a full row/column of thumbnails actually fits */
+  cw = (m->win_w - 2 * (int)gappo - (int)(cols - 1) * (int)gappi) / (int)cols;
+  ch = (m->win_h - 2 * (int)gappo - (int)(rows - 1) * (int)gappi) / (int)rows;
+
+  c = m->clients;
+  cy = 0;
+  for (i = 0; i < rows; i++) {
+    cx = 0;
+    cmaxh = 0;
+    rowstart = c;
+    for (j = 0; j < cols && c; j++, c = c->next) {
+      c->pre.scaled_image =
+          previewallwin_scaledown(c->pre.orig_image, MAX(cw, 1), MAX(ch, 1));
+      if (!c->pre.scaled_image)
+        return;
+      c->pre.x = cx;
+      cmaxh = MAX(c->pre.scaled_image->height, cmaxh);
+      cx += c->pre.scaled_image->width + gappi;
+    }
+    c = rowstart;
+    cx = m->win_x + (m->win_w - cx) / 2;
+    for (j = 0; j < cols && c; j++, c = c->next) {
+      c->pre.x += cx;
+      c->pre.y = cy + (cmaxh - c->pre.scaled_image->height) / 2;
+    }
+    cy += cmaxh + gappi;
+  }
+  cy = m->win_y + (m->win_h - cy) / 2;
+  for (c = m->clients; c; c = c->next)
+    c->pre.y += cy;
+}
+
+/* grab an ARGB snapshot of c's window contents; NULL on failure */
+XImage *previewallwin_snapshot(Client *c) {
+  XWindowAttributes attr;
+  XRenderPictFormat *format, *format32;
+  XRenderPictureAttributes pa;
+  Picture src, dst;
+  Pixmap pixmap;
+  XRenderColor clear = {0, 0, 0, 0};
+  XImage *img = NULL;
+  int has_alpha;
+
+  if (c->w <= 0 || c->h <= 0)
+    return NULL;
+
+  /* c->win can be destroyed out from under us (the client races the
+   * snapshot); xerror() only allow-lists a handful of (request, error)
+   * pairs, so a BadWindow/BadMatch here would otherwise fall through to
+   * Xlib's default handler, which is allowed to exit() -- taking the whole
+   * WM down over one failed thumbnail. Swallow errors for the whole capture
+   * instead, same trick unmanage() and this function's own caller already
+   * use elsewhere in the file. */
+  XSetErrorHandler(xerrordummy);
+
+  if (!XGetWindowAttributes(display, c->win, &attr))
+    goto out;
+  if (!(format = XRenderFindVisualFormat(display, attr.visual)))
+    goto out;
+  if (!(format32 = XRenderFindStandardFormat(display, PictStandardARGB32)))
+    goto out;
+
+  has_alpha = (format->type == PictTypeDirect && format->direct.alphaMask);
+  pa.subwindow_mode = IncludeInferiors;
+  src = XRenderCreatePicture(display, c->win, format, CPSubwindowMode, &pa);
+  pixmap = XCreatePixmap(display, root, c->w, c->h, 32);
+  dst = XRenderCreatePicture(display, pixmap, format32, 0, NULL);
+
+  XRenderFillRectangle(display, PictOpSrc, dst, &clear, 0, 0, c->w, c->h);
+  XRenderComposite(display, has_alpha ? PictOpOver : PictOpSrc, src, 0, dst, 0, 0,
+                   0, 0, 0, 0, c->w, c->h);
+
+  img = XGetImage(display, pixmap, 0, 0, c->w, c->h, AllPlanes, ZPixmap);
+
+  XRenderFreePicture(display, src);
+  XRenderFreePicture(display, dst);
+  XFreePixmap(display, pixmap);
+
+out:
+  XSync(display, False); /* flush so any error above lands on xerrordummy, not xerror */
+  XSetErrorHandler(xerror);
+
+  if (!img)
+    return NULL;
+  img->red_mask = format32->direct.redMask << format32->direct.red;
+  img->green_mask = format32->direct.greenMask << format32->direct.green;
+  img->blue_mask = format32->direct.blueMask << format32->direct.blue;
+  /* the data is 32bpp ARGB, but present it as the screen's depth so the later
+   * XPutImage onto a DefaultDepth preview window doesn't BadMatch (the alpha
+   * byte is simply ignored) */
+  img->depth = DefaultDepth(display, screen);
+  return img;
+}
+
+/* down-scale orig to fit within cw x ch, keeping aspect ratio and never
+ * upscaling; NULL on failure.
+ *
+ * The upstream patch restricts the scale to an integer factor (1, 1/2, 1/3,
+ * ...), so a window a hair too big for its cell drops straight to half size --
+ * that is the "previews too small" effect. This uses a fractional scale so the
+ * thumbnail actually fills the cell. Sampling is still nearest-neighbour. */
+XImage *previewallwin_scaledown(XImage *orig, unsigned int cw, unsigned int ch) {
+  XImage *out;
+  double s;
+  int w, h, x, y;
+
+  if (!orig || orig->width <= 0 || orig->height <= 0)
+    return NULL;
+  cw = MAX(cw, 1);
+  ch = MAX(ch, 1);
+  s = MIN((double)cw / orig->width, (double)ch / orig->height);
+  if (s > 1.0)
+    s = 1.0; /* don't blow small windows up past their real size */
+  w = MAX((int)(orig->width * s), 1);
+  h = MAX((int)(orig->height * s), 1);
+
+  out = XCreateImage(display, DefaultVisual(display, screen), orig->depth,
+                     ZPixmap, 0, NULL, w, h, 32, 0);
+  if (!out)
+    return NULL;
+  if (!(out->data = malloc((size_t)h * out->bytes_per_line))) {
+    XDestroyImage(out);
+    return NULL;
+  }
+  for (y = 0; y < h; y++) {
+    int oy = MIN((int)((y + 0.5) / s), orig->height - 1);
+    for (x = 0; x < w; x++) {
+      int ox = MIN((int)((x + 0.5) / s), orig->width - 1);
+      XPutPixel(out, x, y, XGetPixel(orig, ox, oy));
+    }
+  }
+  return out;
+}
+
+/* free every snapshot/scaled image hanging off the monitor's clients */
+static void previewallwin_free_images(Monitor *m) {
+  Client *c;
+
+  for (c = m->clients; c; c = c->next) {
+    if (c->pre.orig_image) {
+      XDestroyImage(c->pre.orig_image);
+      c->pre.orig_image = NULL;
+    }
+    if (c->pre.scaled_image) {
+      XDestroyImage(c->pre.scaled_image);
+      c->pre.scaled_image = NULL;
+    }
+  }
+}
+
+/* drop whatever preview overlay state c is carrying (window + snapshots).
+ * Called wherever a Client struct is about to be free()d -- unmanage()'s
+ * main path, but also its two swallow-related early returns and
+ * unswallow(), which each free() a parked Client struct directly and would
+ * otherwise leak c->pre.win (a real X window) and any cached XImages if the
+ * overlay had ever been opened on that client before it got swallowed. */
+static void previewallwin_forget(Client *c) {
+  if (c->pre.win)
+    XDestroyWindow(display, c->pre.win);
+  if (c->pre.orig_image)
+    XDestroyImage(c->pre.orig_image);
+  if (c->pre.scaled_image)
+    XDestroyImage(c->pre.scaled_image);
+}
+
+/* map a preview grid index (0-based) to the key that jumps straight to it:
+ * '1'..'9' for the first nine slots, '0' for the tenth, then 'a'..'z' -- same
+ * order gnome-shell's dash uses for Alt+1..9, extended past nine windows */
+static void previewallwin_label(int idx, char *buf) {
+  if (idx < 9)
+    buf[0] = '1' + idx;
+  else if (idx == 9)
+    buf[0] = '0';
+  else
+    buf[0] = 'a' + (idx - 10);
+  buf[1] = '\0';
+}
+
+/* inverse of previewallwin_label: which grid index does this keysym pick?
+ * -1 if ks isn't a label key at all */
+static int previewallwin_label_index(KeySym ks) {
+  if (ks >= XK_1 && ks <= XK_9)
+    return (int)(ks - XK_1);
+  if (ks == XK_0)
+    return 9;
+  if (ks >= XK_a && ks <= XK_z)
+    return 10 + (int)(ks - XK_a);
+  return -1;
+}
+
+/* idx is this client's position in the grid (for its Alt+key label badge) */
+static void previewallwin_draw(Client *c, int idx) {
+  GC gc = XCreateGC(display, c->pre.win, 0, NULL);
+  char label[2];
+  unsigned int lw, lh, tw;
+
+  XPutImage(display, c->pre.win, gc, c->pre.scaled_image, 0, 0, 0, 0,
+            c->pre.scaled_image->width, c->pre.scaled_image->height);
+  XFreeGC(display, gc);
+
+  /* small badge in the top-left corner showing the Alt+<key> shortcut */
+  previewallwin_label(idx, label);
+  tw = drw_fontset_getwidth(drw, label);
+  lh = drw->fonts->h + PREVIEW_LABEL_PAD;
+  lw = MAX(lh, tw + PREVIEW_LABEL_PAD);
+  drw_setscheme(drw, scheme[SchemeSel]);
+  /* drw_text fills its own w x h background (ColBg) before drawing the
+   * glyph (ColFg), so this alone paints the whole badge */
+  drw_text(drw, 0, 0, lw, lh, (lw - tw) / 2, label, 0);
+  drw_map(drw, c->pre.win, 0, 0, lw, lh);
+}
+
+void togglepreviewallwin(const Arg *arg) {
+  Monitor *m = sel_mon;
+  Client *c, *chosen = NULL;
+  unsigned int n = 0;
+  int i, sel = 0;
+  Window departed = None; /* set if one of our own clients died/withdrew mid-preview */
+  XEvent ev;
+
+  (void)arg;
+
+  if (previewallwin) /* re-triggered while the loop is running: ignore */
+    return;
+  for (c = m->clients; c; c = c->next)
+    n++;
+  if (n == 0)
+    return;
+
+  /* grab the keyboard FIRST and check it actually succeeded. Once the real
+   * windows are unmapped below, this grab is the only path left/right/etc.
+   * events have to reach us through -- previously the grab was requested
+   * after hiding the windows with its return value ignored, so a failed grab
+   * (e.g. AlreadyGrabbed because something else holds an active keyboard
+   * grab) would leave the real windows hidden with no keyboard input able to
+   * reach the modal loop at all, hanging dwm until a click happened to land
+   * on a thumbnail. Bail out cleanly instead, before anything is touched. */
+  if (XGrabKeyboard(display, root, False, GrabModeAsync, GrabModeAsync,
+                    CurrentTime) != GrabSuccess)
+    return;
+
+  /* snapshot every client first; if any fails, undo and bail (nothing hidden
+   * yet, so this is a clean no-op) */
+  for (c = m->clients; c; c = c->next) {
+    c->pre.orig_image = previewallwin_snapshot(c);
+    if (!c->pre.orig_image) {
+      previewallwin_free_images(m);
+      XUngrabKeyboard(display, CurrentTime);
+      return;
+    }
+  }
+
+  previewallwin = 1;
+  previewallwin_layout(n, m, PREVIEW_GAP_OUTER, PREVIEW_GAP_INNER);
+  for (c = m->clients; c; c = c->next) {
+    if (!c->pre.scaled_image) { /* layout ran out of memory */
+      previewallwin = 0;
+      previewallwin_free_images(m);
+      XUngrabKeyboard(display, CurrentTime);
+      return;
+    }
+  }
+
+  /* create/position the overlay windows (override-redirect so dwm's
+   * maprequest handler leaves them alone) and map them */
+  for (c = m->clients; c; c = c->next) {
+    if (!c->pre.win) {
+      XSetWindowAttributes swa = {.override_redirect = True,
+                                  .background_pixel =
+                                      scheme[SchemeNorm][ColBg].pixel,
+                                  .border_pixel =
+                                      scheme[SchemeNorm][ColBorder].pixel,
+                                  .event_mask = ButtonPressMask | ExposureMask |
+                                                EnterWindowMask |
+                                                LeaveWindowMask};
+      c->pre.win = XCreateWindow(
+          display, root, c->pre.x, c->pre.y, c->pre.scaled_image->width,
+          c->pre.scaled_image->height, 1, DefaultDepth(display, screen),
+          CopyFromParent, DefaultVisual(display, screen),
+          CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask, &swa);
+    } else {
+      XMoveResizeWindow(display, c->pre.win, c->pre.x, c->pre.y,
+                        c->pre.scaled_image->width,
+                        c->pre.scaled_image->height);
+    }
+    XSetWindowBorder(display, c->pre.win, scheme[SchemeNorm][ColBorder].pixel);
+    XMapRaised(display, c->pre.win);
+  }
+
+  /* hide the real windows without dwm's unmapnotify handler treating it as the
+   * client withdrawing (which would unmanage every window) -- same trick as
+   * hide() */
+  {
+    XWindowAttributes ra;
+    XGrabServer(display);
+    XGetWindowAttributes(display, root, &ra);
+    XSelectInput(display, root, ra.your_event_mask & ~SubstructureNotifyMask);
+    for (c = m->clients; c; c = c->next) {
+      XWindowAttributes ca;
+      XGetWindowAttributes(display, c->win, &ca);
+      XSelectInput(display, c->win, ca.your_event_mask & ~StructureNotifyMask);
+      XUnmapWindow(display, c->win);
+      XSelectInput(display, c->win, ca.your_event_mask);
+    }
+    XSelectInput(display, root, ra.your_event_mask);
+    XUngrabServer(display);
+  }
+
+  XSync(display, False); /* let the maps land before we paint */
+  for (c = m->clients, i = 0; c; c = c->next, i++)
+    previewallwin_draw(c, i);
+  previewallwin_highlight(sel, m);
+
+  /* mirror run()'s own "while (running && ...)" so SIGTERM/SIGHUP (quit or
+   * restart) aren't stuck waiting behind the overlay until another X event
+   * happens to arrive and let this loop notice */
+  while (previewallwin && running) {
+    XNextEvent(display, &ev);
+    switch (ev.type) {
+    case Expose:
+      if (ev.xexpose.count != 0)
+        break;
+      for (c = m->clients, i = 0; c; c = c->next, i++)
+        if (ev.xexpose.window == c->pre.win) {
+          previewallwin_draw(c, i);
+          break;
+        }
+      break;
+    case ConfigureNotify:
+      /* root reconfiguring means a monitor was unplugged/replugged or
+       * resolution changed -- run it through the real handler right away so
+       * mon->mx/my/mw/mh (and win_x/win_y/win_w/win_h) don't go stale for the
+       * final arrange(m) below. The already-laid-out thumbnails on screen
+       * stay as they are until the next time the overlay is opened. */
+      if (ev.xconfigure.window == root && event_handlers[ev.type])
+        event_handlers[ev.type](&ev);
+      break;
+    case ButtonPress:
+      if (ev.xbutton.button != Button1)
+        break;
+      for (c = m->clients; c; c = c->next)
+        if (ev.xbutton.window == c->pre.win) {
+          chosen = c;
+          previewallwin = 0;
+          break;
+        }
+      break;
+    case KeyPress: {
+      KeySym ks = XkbKeycodeToKeysym(display, ev.xkey.keycode, 0, 0);
+      /* Alt+<badge key> jumps straight to that thumbnail, gnome-dock-style;
+       * anything else (including plain 1-9/0/a-z, which aren't bound to
+       * anything otherwise) falls through to the normal grid navigation */
+      int labelidx =
+          (ev.xkey.state & Mod1Mask) ? previewallwin_label_index(ks) : -1;
+
+      if (labelidx >= 0 && labelidx < (int)n) {
+        for (c = m->clients, i = 0; c; c = c->next, i++)
+          if (i == labelidx) {
+            chosen = c;
+            break;
+          }
+        previewallwin = 0;
+      } else if (ks == XK_Tab) {
+        /* alt-tab: jump straight to the most-recently-used *other* window --
+         * the one MOD+Tab-style focus switching would land on. m->stack is
+         * MRU-ordered (focus() moves the focused client to its head), so
+         * this follows focus history, across tags if that's where the
+         * window lives -- unlike MOD+Tab, which toggles the last tag. */
+        Client *mru;
+        for (mru = m->stack; mru; mru = mru->stack_next)
+          if (mru != m->sel && !HIDDEN(mru))
+            break;
+        if (mru) {
+          chosen = mru;
+          previewallwin = 0;
+        }
+      } else if (ks == XK_j || ks == XK_l || ks == XK_Down || ks == XK_Right) {
+        if (sel + 1 < (int)n)
+          previewallwin_highlight(++sel, m);
+      } else if (ks == XK_k || ks == XK_h || ks == XK_Up || ks == XK_Left) {
+        if (sel > 0)
+          previewallwin_highlight(--sel, m);
+      } else if (ks == XK_Return || ks == XK_space) {
+        for (c = m->clients, i = 0; c; c = c->next, i++)
+          if (i == sel) {
+            chosen = c;
+            break;
+          }
+        previewallwin = 0;
+      } else if (ks == XK_Escape || ks == XK_q) {
+        previewallwin = 0;
+      }
+      break;
+    }
+    case EnterNotify:
+    case LeaveNotify:
+      for (c = m->clients; c; c = c->next)
+        if (ev.xcrossing.window == c->pre.win) {
+          XSetWindowBorder(
+              display, c->pre.win,
+              scheme[ev.type == EnterNotify ? SchemeSel : SchemeNorm][ColBorder]
+                  .pixel);
+          break;
+        }
+      break;
+    case DestroyNotify:
+    case UnmapNotify: {
+      Window w = (ev.type == DestroyNotify) ? ev.xdestroywindow.window
+                                            : ev.xunmap.window;
+      int ours = 0;
+
+      for (c = m->clients; c; c = c->next)
+        if (c->win == w) {
+          ours = 1;
+          break;
+        }
+      if (ours) {
+        /* one of the previewed monitor's own clients went away; hand the
+         * event back to the main loop and bail so it gets unmanaged
+         * properly, and remember its window so the cleanup below doesn't
+         * try to re-map (or re-hide) it on the way out */
+        departed = w;
+        XPutBackEvent(display, &ev);
+        previewallwin = 0;
+      } else {
+        /* not ours -- e.g. a client on another monitor, or a systray icon.
+         * Putting it back would just hand us the same event again next
+         * XNextEvent (nothing else is running to consume it), hanging the
+         * overlay exactly like the bug this loop is meant to avoid; run it
+         * through the real dispatch table instead so it's still handled
+         * properly without touching our own state. */
+        if (event_handlers[ev.type])
+          event_handlers[ev.type](&ev);
+      }
+      break;
+    }
+    }
+  }
+
+  /* other event types (MapRequest, ConfigureRequest, ...) are intentionally
+   * dropped for the duration of the overlay, like the upstream patch */
+
+  XUngrabKeyboard(display, CurrentTime);
+
+  /* a client dying mid-preview would make these calls hit a stale window;
+   * swallow the resulting BadWindow/BadMatch instead of letting dwm exit */
+  XGrabServer(display);
+  XSetErrorHandler(xerrordummy);
+  for (c = m->clients; c; c = c->next) {
+    if (c->pre.win)
+      XUnmapWindow(display, c->pre.win);
+    /* don't force a client that just died or voluntarily withdrew back onto
+     * the screen -- for the destroyed case this would just be a harmlessly
+     * swallowed error, but for a real withdraw (UnmapNotify) the window
+     * still exists and this would visibly flash it back up against its own
+     * request right before the deferred event unmanages/withdraws it */
+    if (c->win != departed)
+      XMapWindow(display, c->win);
+  }
+  XSync(display, False);
+  XSetErrorHandler(xerror);
+  XUngrabServer(display);
+  previewallwin_free_images(m);
+
+  if (chosen) {
+    const Arg a = {.ui = chosen->tags};
+    view(&a); /* jump to the window's tag (no-op if already shown), keeps
+                 pertag state consistent */
+    focus(chosen);
+  } else {
+    focus(m->sel); /* cancelled: restore the previous focus */
+  }
+  arrange(m);
 }
 
 /* parse args, open the display, set up, scan, run the loop, then clean up */

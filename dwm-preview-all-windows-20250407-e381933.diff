@@ -1,0 +1,403 @@
+From e381933255718c6ed30e1b930d8fd76d62ccda75 Mon Sep 17 00:00:00 2001
+From: elbachir-one <bachiralfa@gmail.com>
+Date: Mon, 7 Apr 2025 06:02:14 +0100
+Subject: [PATCH] Added some keys to move/select around windows in the preview
+
+---
+ config.def.h |   4 +
+ config.mk    |   2 +-
+ dwm.c        | 307 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 312 insertions(+), 1 deletion(-)
+
+diff --git a/config.def.h b/config.def.h
+index 4412cb1..37feaf7 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -1,5 +1,8 @@
+ /* See LICENSE file for copyright and license details. */
+ 
++//#define ACTUALFULLSCREEN /* Uncomment if the actualfullscreen patch is added */
++//#define AWESOMEBAR /* Uncommnet if the awesomebar patch is used */
++
+ /* appearance */
+ static const unsigned int borderpx  = 1;        /* border pixel of windows */
+ static const unsigned int snap      = 32;       /* snap pixel */
+@@ -95,6 +98,7 @@ static const Key keys[] = {
+ 	TAGKEYS(                        XK_8,                      7)
+ 	TAGKEYS(                        XK_9,                      8)
+ 	{ MODKEY|ShiftMask,             XK_q,      quit,           {0} },
++	{ MODKEY,                       XK_r,      togglepreviewallwin,  {0} },
+ };
+ 
+ /* button definitions */
+diff --git a/config.mk b/config.mk
+index 8efca9a..8df2978 100644
+--- a/config.mk
++++ b/config.mk
+@@ -23,7 +23,7 @@ FREETYPEINC = /usr/include/freetype2
+ 
+ # includes and libs
+ INCS = -I${X11INC} -I${FREETYPEINC}
+-LIBS = -L${X11LIB} -lX11 ${XINERAMALIBS} ${FREETYPELIBS}
++LIBS = -L${X11LIB} -lX11 ${XINERAMALIBS} ${FREETYPELIBS} -lXrender
+ 
+ # flags
+ CPPFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DVERSION=\"${VERSION}\" ${XINERAMAFLAGS}
+diff --git a/dwm.c b/dwm.c
+index 1443802..6d38874 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -40,6 +40,7 @@
+ #include <X11/extensions/Xinerama.h>
+ #endif /* XINERAMA */
+ #include <X11/Xft/Xft.h>
++#include <X11/extensions/Xrender.h>
+ 
+ #include "drw.h"
+ #include "util.h"
+@@ -83,6 +84,16 @@ typedef struct {
+ 
+ typedef struct Monitor Monitor;
+ typedef struct Client Client;
++
++typedef struct Preview Preview;
++struct Preview {
++	XImage *orig_image;
++	XImage *scaled_image;
++	Window win;
++	unsigned int x, y;
++	Preview *next;
++};
++
+ struct Client {
+ 	char name[256];
+ 	float mina, maxa;
+@@ -96,6 +107,7 @@ struct Client {
+ 	Client *snext;
+ 	Monitor *mon;
+ 	Window win;
++	Preview pre;
+ };
+ 
+ typedef struct {
+@@ -232,8 +244,14 @@ static int xerror(Display *dpy, XErrorEvent *ee);
+ static int xerrordummy(Display *dpy, XErrorEvent *ee);
+ static int xerrorstart(Display *dpy, XErrorEvent *ee);
+ static void zoom(const Arg *arg);
++static void togglepreviewallwin();
++static void highlightwindow(int idx, Monitor *m);
++static void setpreviewwindowsizepositions(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi);
++static XImage *getwindowximage(Client *c);
++static XImage *scaledownimage(XImage *orig_image, unsigned int cw, unsigned int ch);
+ 
+ /* variables */
++
+ static const char broken[] = "broken";
+ static char stext[256];
+ static int screen;
+@@ -266,6 +284,7 @@ static Display *dpy;
+ static Drw *drw;
+ static Monitor *mons, *selmon;
+ static Window root, wmcheckwin;
++static int previewallwin = 0;
+ 
+ /* configuration, allows nested code to access above variables */
+ #include "config.h"
+@@ -2139,6 +2158,294 @@ zoom(const Arg *arg)
+ 	pop(c);
+ }
+ 
++void
++togglepreviewallwin() {
++	if (previewallwin) {  /* If already active, disable preview */
++		previewallwin = 0;
++		for (Client *c = selmon->clients; c; c = c->next) {
++			XUnmapWindow(dpy, c->pre.win);
++			XMapWindow(dpy, c->win);
++			if (c->pre.orig_image)
++				XDestroyImage(c->pre.orig_image);
++			if (c->pre.scaled_image)
++				XDestroyImage(c->pre.scaled_image);
++		}
++		arrange(selmon);
++		focus(NULL);
++		return;  /* Exit function early to prevent running again */
++	}
++
++	previewallwin = 1;  /* Enable preview mode */
++	Monitor *m = selmon;
++	Client *c, *focus_c = NULL;
++	unsigned int n = 0;
++
++	for (c = m->clients; c; c = c->next, n++) {
++#ifdef ACTUALFULLSCREEN
++		if (c->isfullscreen)
++			togglefullscr(&(Arg){0});
++#endif
++#ifdef AWESOMEBAR
++		if (HIDDEN(c))
++			continue;
++#endif
++		c->pre.orig_image = getwindowximage(c);
++	}
++
++	if (n == 0) return;
++
++	setpreviewwindowsizepositions(n, m, 60, 15);
++	XEvent event;
++
++	for (c = m->clients; c; c = c->next) {
++		if (!c->pre.win)
++			c->pre.win = XCreateSimpleWindow(dpy, root, c->pre.x, c->pre.y,
++					c->pre.scaled_image->width, c->pre.scaled_image->height,
++					1, BlackPixel(dpy, screen), WhitePixel(dpy, screen));
++		else
++			XMoveResizeWindow(dpy, c->pre.win, c->pre.x, c->pre.y,
++					c->pre.scaled_image->width, c->pre.scaled_image->height);
++
++		XSetWindowBorder(dpy, c->pre.win, scheme[SchemeNorm][ColBorder].pixel);
++		XUnmapWindow(dpy, c->win);
++
++		if (c->pre.win) {
++			XSelectInput(dpy, c->pre.win, ButtonPress | EnterWindowMask | LeaveWindowMask);
++			XMapWindow(dpy, c->pre.win);
++			GC gc = XCreateGC(dpy, c->pre.win, 0, NULL);
++			XPutImage(dpy, c->pre.win, gc, c->pre.scaled_image, 0, 0, 0, 0,
++					c->pre.scaled_image->width, c->pre.scaled_image->height);
++		}
++	}
++
++	int selected_idx = 0;
++
++	while (previewallwin) {
++		XNextEvent(dpy, &event);
++		if (event.type == ButtonPress) {
++			if (event.xbutton.button == Button1) { /* Left-click to select a window */
++				for (c = selmon->clients; c; c = c->next) {
++					if (event.xbutton.window == c->pre.win) {
++						previewallwin = 0;
++						selmon->tagset[selmon->seltags] = c->tags;
++						focus(c);
++						arrange(selmon); /* Ensure layout updates correctly */
++						break;
++					}
++				}
++			}
++		}
++		if (event.type == KeyPress) {
++			if (event.xkey.keycode == XKeysymToKeycode(dpy, XK_j)) {
++				if (selected_idx < n - 1) {
++					selected_idx++;
++				}
++				highlightwindow(selected_idx, m);
++			}
++			if (event.xkey.keycode == XKeysymToKeycode(dpy, XK_k)) {
++				if (selected_idx > 0) {
++					selected_idx--;
++				}
++				highlightwindow(selected_idx, m);
++			}
++			if (event.xkey.keycode == XKeysymToKeycode(dpy, XK_Return)) {
++				previewallwin = 0;
++				Client *selected_client = NULL;
++				int idx = 0;
++
++				for (c = m->clients; c; c = c->next, idx++) {
++					if (idx == selected_idx) {
++						selected_client = c;
++						break;
++					}
++				}
++				if (selected_client) {
++					selmon->tagset[selmon->seltags] = selected_client->tags;
++					focus(selected_client);
++					arrange(selmon);
++				}
++			}
++			if (event.xkey.keycode == XKeysymToKeycode(dpy, XK_r)) {
++				previewallwin = 0;
++				Client *selected_client = NULL;
++				int idx = 0;
++
++				for (c = m->clients; c; c = c->next, idx++) {
++					if (idx == selected_idx) {
++						selected_client = c;
++						break;
++					}
++				}
++				if (selected_client) {
++					selmon->tagset[selmon->seltags] = selected_client->tags;
++					focus(selected_client);
++					arrange(selmon);
++				}
++			}
++		}
++
++		if (event.type == EnterNotify) {
++			for (c = m->clients; c; c = c->next) {
++				if (event.xcrossing.window == c->pre.win) {
++					XSetWindowBorder(dpy, c->pre.win, scheme[SchemeSel][ColBorder].pixel);
++					break;
++				}
++			}
++		}
++		if (event.type == LeaveNotify) {
++			for (c = m->clients; c; c = c->next) {
++				if (event.xcrossing.window == c->pre.win) {
++					XSetWindowBorder(dpy, c->pre.win, scheme[SchemeNorm][ColBorder].pixel);
++					break;
++				}
++			}
++		}
++	}
++	for (c = selmon->clients; c; c = c->next) { /* Restore all windows when exiting */
++		XUnmapWindow(dpy, c->pre.win);
++		XMapWindow(dpy, c->win);
++		if (c->pre.orig_image)
++			XDestroyImage(c->pre.orig_image);
++		if (c->pre.scaled_image)
++			XDestroyImage(c->pre.scaled_image);
++	}
++	arrange(m);
++	focus(focus_c);
++}
++
++void
++highlightwindow(int idx, Monitor *m) {
++	int i = 0;
++	Client *c;
++	for (c = m->clients; c; c = c->next, i++) {
++		if (i == idx) {
++			XSetWindowBorder(dpy, c->pre.win, scheme[SchemeSel][ColBorder].pixel); /* Highlight selected window */
++		} else {
++			XSetWindowBorder(dpy, c->pre.win, scheme[SchemeNorm][ColBorder].pixel); /* Reset border for other windows */
++		}
++	}
++}
++
++void
++setpreviewwindowsizepositions(unsigned int n, Monitor *m, unsigned int gappo, unsigned int gappi){
++	unsigned int i, j;
++	unsigned int cx, cy, cw, ch, cmaxh;
++	unsigned int cols, rows;
++	Client *c, *tmpc;
++
++	if (n == 1) {
++		c = m->clients;
++		cw = (m->ww - 2 * gappo) * 0.8;
++		ch = (m->wh - 2 * gappo) * 0.9;
++		c->pre.scaled_image = scaledownimage(c->pre.orig_image, cw, ch);
++		c->pre.x = m->mx + (m->mw - c->pre.scaled_image->width) / 2;
++		c->pre.y = m->my + (m->mh - c->pre.scaled_image->height) / 2;
++		return;
++	}
++	if (n == 2) {
++		c = m->clients;
++		cw = (m->ww - 2 * gappo - gappi) / 2;
++		ch = (m->wh - 2 * gappo) * 0.7;
++		c->pre.scaled_image = scaledownimage(c->pre.orig_image, cw, ch);
++		c->next->pre.scaled_image = scaledownimage(c->next->pre.orig_image, cw, ch);
++		c->pre.x = m->mx + (m->mw - c->pre.scaled_image->width - gappi - c->next->pre.scaled_image->width) / 2;
++		c->pre.y = m->my + (m->mh - c->pre.scaled_image->height) / 2;
++		c->next->pre.x = c->pre.x + c->pre.scaled_image->width + gappi;
++		c->next->pre.y = m->my + (m->mh - c->next->pre.scaled_image->height) / 2;
++		return;
++	}
++	for (cols = 0; cols <= n / 2; cols++)
++		if (cols * cols >= n)
++			break;
++	rows = (cols && (cols - 1) * cols >= n) ? cols - 1 : cols;
++	ch = (m->wh - 2 * gappo) / rows;
++	cw = (m->ww - 2 * gappo) / cols;
++	c = m->clients;
++	cy = 0;
++	for (i = 0; i < rows; i++) {
++		cx = 0;
++		cmaxh = 0;
++		tmpc = c;
++		for (int j = 0; j < cols; j++) {
++			if (!c)
++				break;
++			c->pre.scaled_image = scaledownimage(c->pre.orig_image, cw, ch);
++			c->pre.x = cx;
++			cmaxh = c->pre.scaled_image->height > cmaxh ? c->pre.scaled_image->height : cmaxh;
++			cx += c->pre.scaled_image->width + gappi;
++			c = c->next;
++		}
++		c = tmpc;
++		cx = m->wx + (m->ww - cx) / 2;
++		for (j = 0; j < cols; j++) {
++			if (!c)
++				break;
++			c->pre.x += cx;
++			c->pre.y = cy + (cmaxh - c->pre.scaled_image->height) / 2;
++			c = c->next;
++		}
++		cy += cmaxh + gappi;
++	}
++	cy = m->wy + (m->wh - cy) / 2;
++	for (c = m->clients; c; c = c->next)
++		c->pre.y += cy;
++}
++
++XImage*
++getwindowximage(Client *c) {
++	XWindowAttributes attr;
++	XGetWindowAttributes( dpy, c->win, &attr );
++	XRenderPictFormat *format = XRenderFindVisualFormat( dpy, attr.visual );
++	int hasAlpha = ( format->type == PictTypeDirect && format->direct.alphaMask );
++	XRenderPictureAttributes pa;
++	pa.subwindow_mode = IncludeInferiors;
++	Picture picture = XRenderCreatePicture( dpy, c->win, format, CPSubwindowMode, &pa );
++	Pixmap pixmap = XCreatePixmap(dpy, root, c->w, c->h, 32);
++	XRenderPictureAttributes pa2;
++	XRenderPictFormat *format2 = XRenderFindStandardFormat(dpy, PictStandardARGB32);
++	Picture pixmapPicture = XRenderCreatePicture( dpy, pixmap, format2, 0, &pa2 );
++	XRenderColor color;
++	color.red = 0x0000;
++	color.green = 0x0000;
++	color.blue = 0x0000;
++	color.alpha = 0x0000;
++	XRenderFillRectangle (dpy, PictOpSrc, pixmapPicture, &color, 0, 0, c->w, c->h);
++	XRenderComposite(dpy, hasAlpha ? PictOpOver : PictOpSrc, picture, 0,
++			pixmapPicture, 0, 0, 0, 0, 0, 0,
++			c->w, c->h);
++	XImage* temp = XGetImage( dpy, pixmap, 0, 0, c->w, c->h, AllPlanes, ZPixmap );
++	temp->red_mask = format2->direct.redMask << format2->direct.red;
++	temp->green_mask = format2->direct.greenMask << format2->direct.green;
++	temp->blue_mask = format2->direct.blueMask << format2->direct.blue;
++	temp->depth = DefaultDepth(dpy, screen);
++	return temp;
++}
++
++XImage*
++scaledownimage(XImage *orig_image, unsigned int cw, unsigned int ch) {
++	int factor_w = orig_image->width / cw + 1;
++	int factor_h = orig_image->height / ch + 1;
++	int scale_factor = factor_w > factor_h ? factor_w : factor_h;
++	int scaled_width = orig_image->width / scale_factor;
++	int scaled_height = orig_image->height / scale_factor;
++	XImage *scaled_image = XCreateImage(dpy, DefaultVisual(dpy, DefaultScreen(dpy)),
++			orig_image->depth,
++			ZPixmap, 0, NULL,
++			scaled_width, scaled_height,
++			32, 0);
++	scaled_image->data = malloc(scaled_image->height * scaled_image->bytes_per_line);
++	for (int y = 0; y < scaled_height; y++) {
++		for (int x = 0; x < scaled_width; x++) {
++			int orig_x = x * scale_factor;
++			int orig_y = y * scale_factor;
++			unsigned long pixel = XGetPixel(orig_image, orig_x, orig_y);
++			XPutPixel(scaled_image, x, y, pixel);
++		}
++	}
++	scaled_image->depth = orig_image->depth;
++	return scaled_image;
++}
++
+ int
+ main(int argc, char *argv[])
+ {
+-- 
+2.48.1
+

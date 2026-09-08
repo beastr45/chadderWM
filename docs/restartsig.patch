@@ -1,0 +1,103 @@
+Subject: [PATCH] restartsig: restart dwm in place (SIGHUP) / clean exit (SIGTERM)
+
+Ports dwm-restartsig-20180523-6.2.diff (dwm.suckless.org/patches/restartsig)
+onto chadwm, adapted to chadwm names/style.
+
+What it does:
+  * `static int restart` flag.
+  * quit() gains an arg: quit({.i = 1}) sets `restart` before stopping the
+    loop; quit({.i = 0}) (or {0}) is the old plain quit.
+  * SIGHUP  -> sighup()  -> quit({1})  (recompile then `pkill -HUP chadwm`,
+    or bind a key, to reload the binary without logging out).
+  * SIGTERM -> sigterm() -> quit({0})  (logout / `kill` shuts dwm down
+    cleanly instead of it dying to the default SIGTERM disposition).
+  * main() re-execs `execvp(argv[0], argv)` after cleanup() when `restart`.
+
+Window placement across the restart is already preserved by chadwm's existing
+_NET_CLIENT_INFO handling (setclienttagprop() + the read-back in manage()),
+so the companion preserveonrestart patch is not needed. Per-tag mfact /
+nmaster / layout are NOT persisted (same limitation as upstream).
+
+Independent of docs/dwm-6.5-parity.patch - the two patches touch disjoint
+lines and apply in either order.
+
+Known limitation: glibc signal() installs handlers with SA_RESTART, so
+XNextEvent() is not interrupted; a SIGHUP/SIGTERM is acted on at the next X
+event rather than immediately. This matches the upstream patch and is not
+addressed here (a self-pipe would be the fix).
+
+Suggested config.h keybind (add yourself):
+    { MODKEY|ShiftMask, XK_r, quit, {1} },   // restart in place
+and, if you also want a plain quit:
+    { MODKEY|ShiftMask, XK_q, quit, {0} },
+The existing signals[] entry { "quit", quit } also means
+`chadwm-msg quit i 1` (or your dwmc wrapper) restarts once wired up.
+
+Apply from the repo root:  git apply docs/restartsig.patch
+---
+diff --git a/dwm.c b/dwm.c
+index b515686..c153b9d 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -311,6 +311,8 @@ static void placemouse(const Arg *arg);
+ static void pop(Client *client);
+ static void propertynotify(XEvent *e);
+ static void quit(const Arg *arg);
++static void sighup(int unused);
++static void sigterm(int unused);
+ static Client *recttoclient(int x, int y, int w, int h);
+ static Monitor *recttomon(int x, int y, int w, int h);
+ static void removesystrayicon(Client *i);
+@@ -430,6 +432,7 @@ static void (*event_handlers[LASTEvent])(XEvent *) = {
+     [UnmapNotify] = unmapnotify};
+ static Atom wm_atom[WMLast], net_atom[NetLast], xembed_atom[XLast];
+ static int running = 1;
++static int restart = 0;
+ static Cur *cursor[CurLast];
+ static Clr **scheme, border_clr;
+ static Display *display;
+@@ -2932,8 +2935,24 @@ void propertynotify(XEvent *e) {
+   }
+ }
+ 
+-/* stop the main event loop */
+-void quit(const Arg *arg) { running = 0; }
++/* stop the main event loop; arg->i != 0 asks main() to re-exec dwm afterwards */
++void quit(const Arg *arg) {
++  if (arg->i)
++    restart = 1;
++  running = 0;
++}
++
++/* SIGHUP: restart dwm in place (re-exec after cleanup) */
++void sighup(int unused) {
++  Arg a = {.i = 1};
++  quit(&a);
++}
++
++/* SIGTERM: exit cleanly (e.g. on logout) instead of being killed */
++void sigterm(int unused) {
++  Arg a = {.i = 0};
++  quit(&a);
++}
+ 
+ /* return the PID that owns an X window */
+ pid_t winpid(Window w) {
+@@ -3617,6 +3636,8 @@ void setup(void) {
+                   LeaveWindowMask | StructureNotifyMask | PropertyChangeMask;
+   XChangeWindowAttributes(display, root, CWEventMask | CWCursor, &wa);
+   XSelectInput(display, root, wa.event_mask);
++  signal(SIGHUP, sighup);
++  signal(SIGTERM, sigterm);
+   grabkeys();
+   focus(NULL);
+ }
+@@ -4616,6 +4637,8 @@ int main(int argc, char *argv[]) {
+   run();
+   cleanup();
+   XCloseDisplay(display);
++  if (restart)
++    execvp(argv[0], argv);
+   return EXIT_SUCCESS;
+ }
+ 

@@ -1,0 +1,37 @@
+Subject: [PATCH] fix pre-existing latent bugs from the d6354ca rename pass
+
+These are NOT part of the 6.4->6.5 port. They are bugs already present in
+chadwm HEAD, introduced by commit d6354ca ("update some names to be more
+sane") when a blanket `c` -> `client` rename hit a string literal.
+
+1. getparentprocess() - /proc/<pid>/stat scan format
+   d6354ca turned  "%*u %*s %*c %u"  into  "%*u %*s %*client %u".
+   `%*c` skips the one-char process-state field; the mangled version makes
+   fscanf try to match the literal text "lient" after the state char, which
+   never matches, so `v` (the parent pid) stays 0 on every Linux call.
+   Effect: getparentprocess() always returns 0  ->  isdescprocess() always
+   returns 0  ->  the swallow patch's termforwin() never finds the spawning
+   terminal, and riodraw_matchpid stops working. The initial commit
+   (fd2bc3f) had the correct format.
+
+2. Makefile .PHONY stray ')'  (informational - fix carried elsewhere)
+   The same era left  `.PHONY: all options clean dist install uninstall)`
+   with a trailing ')'. That is already corrected by
+   docs/dwm-6.5-parity.patch's Makefile hunk (which rewrites that whole
+   line to drop the `options` target). No separate hunk here.
+
+Apply from the repo root:  git apply docs/latent-bug-fixes.patch
+---
+diff --git a/dwm.c b/dwm.c
+index b515686..1e935ec 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -3005,7 +3005,7 @@ pid_t getparentprocess(pid_t p) {
+   if (!(f = fopen(buf, "r")))
+     return 0;
+ 
+-  fscanf(f, "%*u %*s %*client %u", &v);
++  fscanf(f, "%*u %*s %*c %u", &v);
+   fclose(f);
+ #endif /* __linux__*/
+ 

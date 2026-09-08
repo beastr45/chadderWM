@@ -1,0 +1,172 @@
+Subject: [PATCH] dwm 6.4 -> 6.5 upstream parity
+
+Ports the upstream suckless dwm 6.4 -> 6.5 source delta onto chadwm.
+Upstream commit range: 50ad171..061e9fe (dwm.suckless.org).
+
+Contents:
+  * grabkeys(): walk the full keyboard mapping (XDisplayKeycodes +
+    XGetKeyboardMapping) instead of a single XKeysymToKeycode() lookup, so a
+    keysym reachable from more than one keycode is grabbed on all of them.
+  * SIGCHLD: drop the old signal()-based sigchld() handler; install
+    sigaction(SA_NOCLDSTOP|SA_NOCLDWAIT|SA_RESTART, SIG_IGN) in setup() and
+    reap inherited zombies with a waitpid() loop. In spawncmd() the child
+    resets SIGCHLD to SIG_DFL before execvp() so spawned programs get sane
+    wait()/system()/`$(...)` behaviour.
+  * config.mk: -D_POSIX_C_SOURCE=200809L -> -D_XOPEN_SOURCE=700L; VERSION 6.5.
+  * Makefile: drop the `options` target (also drops a pre-existing stray `)`
+    on the .PHONY line - see docs/latent-bug-fixes.patch).
+
+Adapted to chadwm names (dpy->display, numlockmask->numlock_mask) and clang
+LLVM style. fork()/execvp live only in spawncmd(); spawn() is a one-line
+wrapper and riospawn() just calls spawncmd(), so the child-side reset lives
+in spawncmd(). riodraw() uses popen()/pclose() (no fork). <signal.h> and
+<sys/wait.h> are already included in dwm.c.
+
+NOT ported: the upstream `dmenumon` restoration - chadwm launches via its own
+launchers[] array, not a raw dmenucmd.
+
+Apply from the repo root:  git apply docs/dwm-6.5-parity.patch
+---
+diff --git a/Makefile b/Makefile
+index 005b307..cb45378 100644
+--- a/Makefile
++++ b/Makefile
+@@ -6,13 +6,7 @@ include config.mk
+ SRC = drw.c dwm.c util.c
+ OBJ = ${SRC:.c=.o}
+ 
+-all: options chadwm
+-
+-options:
+-	@echo dwm build options:
+-	@echo "CFLAGS   = ${CFLAGS}"
+-	@echo "LDFLAGS  = ${LDFLAGS}"
+-	@echo "CC       = ${CC}"
++all: chadwm
+ 
+ .c.o:
+ 	${CC} -c ${CFLAGS} $<
+@@ -46,4 +40,4 @@ uninstall:
+  		${DESTDIR}${PREFIX}/bin/dwmc\
+ 		${DESTDIR}${MANPREFIX}/man1/chadwm.1
+ 
+-.PHONY: all options clean dist install uninstall)
++.PHONY: all clean dist install uninstall
+diff --git a/config.mk b/config.mk
+index 2e0e0ad..e0bfc15 100644
+--- a/config.mk
++++ b/config.mk
+@@ -1,5 +1,5 @@
+ # dwm version
+-VERSION = 6.4
++VERSION = 6.5
+ 
+ # Customize below to fit your system
+ 
+@@ -27,7 +27,7 @@ INCS = -I${X11INC} -I${FREETYPEINC}
+ LIBS = -L${X11LIB} -lX11 ${XINERAMALIBS} ${FREETYPELIBS} -lXrender -lImlib2 -lX11-xcb -lxcb -lxcb-res ${KVMLIB}
+ 
+ # flags
+-CPPFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_POSIX_C_SOURCE=200809L -DVERSION=\"${VERSION}\" ${XINERAMAFLAGS} -Wno-unused-function
++CPPFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DVERSION=\"${VERSION}\" ${XINERAMAFLAGS} -Wno-unused-function
+ CFLAGS   = -g -std=c99 -pedantic -Wall -O0 ${INCS} ${CPPFLAGS}
+ # CFLAGS   = -std=c99 -pedantic -Wall -Wno-deprecated-declarations -O3 -march=native ${INCS} ${CPPFLAGS}
+ LDFLAGS  = ${LIBS}
+diff --git a/dwm.c b/dwm.c
+index b515686..7d84c67 100644
+--- a/dwm.c
++++ b/dwm.c
+@@ -346,7 +346,6 @@ static void seturgent(Client *client, int urg);
+ static void show(Client *client);
+ static void showhide(Client *client);
+ static void showtagpreview(int tag);
+-static void sigchld(int unused);
+ static void spawn(const Arg *arg);
+ static pid_t spawncmd(const Arg *arg);
+ static void switchtag(void);
+@@ -2319,17 +2318,25 @@ void grabbuttons(Client *client, int focused) {
+ void grabkeys(void) {
+   updatenumlockmask();
+   {
+-    unsigned int i, j;
++    unsigned int i, j, k;
+     unsigned int modifiers[] = {0, LockMask, numlock_mask,
+                                 numlock_mask | LockMask};
+-    KeyCode code;
++    int start, end, skip;
++    KeySym *syms;
+ 
+     XUngrabKey(display, AnyKey, AnyModifier, root);
+-    for (i = 0; i < LENGTH(keys); i++)
+-      if ((code = XKeysymToKeycode(display, keys[i].keysym)))
+-        for (j = 0; j < LENGTH(modifiers); j++)
+-          XGrabKey(display, code, keys[i].mod | modifiers[j], root, True,
+-                   GrabModeAsync, GrabModeAsync);
++    XDisplayKeycodes(display, &start, &end);
++    syms = XGetKeyboardMapping(display, start, end - start + 1, &skip);
++    if (!syms)
++      return;
++    for (k = start; k <= end; k++)
++      for (i = 0; i < LENGTH(keys); i++)
++        /* skip modifier codes, we do that ourselves */
++        if (keys[i].keysym == syms[(k - start) * skip])
++          for (j = 0; j < LENGTH(modifiers); j++)
++            XGrabKey(display, k, keys[i].mod | modifiers[j], root, True,
++                     GrabModeAsync, GrabModeAsync);
++    XFree(syms);
+   }
+ }
+ 
+@@ -3519,9 +3526,17 @@ void setup(void) {
+   int i;
+   XSetWindowAttributes wa;
+   Atom utf8string;
++  struct sigaction sa;
+ 
+-  /* clean up any zombies immediately */
+-  sigchld(0);
++  /* do not transform children into zombies when they terminate */
++  sigemptyset(&sa.sa_mask);
++  sa.sa_flags = SA_NOCLDSTOP | SA_NOCLDWAIT | SA_RESTART;
++  sa.sa_handler = SIG_IGN;
++  sigaction(SIGCHLD, &sa, NULL);
++
++  /* clean up any zombies (inherited from .xinitrc etc) immediately */
++  while (waitpid(-1, NULL, WNOHANG) > 0)
++    ;
+ 
+   /* init screen */
+   screen = DefaultScreen(display);
+@@ -3686,24 +3701,24 @@ void showtagpreview(int tag) {
+     XUnmapWindow(display, sel_mon->tag_win);
+ }
+ 
+-/* reap zombie child processes */
+-void sigchld(int unused) {
+-  if (signal(SIGCHLD, sigchld) == SIG_ERR)
+-    die("can't install SIGCHLD handler:");
+-  while (0 < waitpid(-1, NULL, WNOHANG))
+-    ;
+-}
+-
+ /* fork and exec a command */
+ void spawn(const Arg *arg) { spawncmd(arg); }
+ /* fork / exec a command and return the child PID */
+ pid_t spawncmd(const Arg *arg) {
+   pid_t pid;
++  struct sigaction sa;
++
+   // if (fork() == 0) {
+   if ((pid = fork()) == 0) {
+     if (display)
+       close(ConnectionNumber(display));
+     setsid();
++
++    sigemptyset(&sa.sa_mask);
++    sa.sa_flags = 0;
++    sa.sa_handler = SIG_DFL;
++    sigaction(SIGCHLD, &sa, NULL);
++
+     execvp(((char **)arg->v)[0], (char **)arg->v);
+     die("dwm: execvp '%s' failed:", ((char **)arg->v)[0]);
+   }
