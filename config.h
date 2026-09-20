@@ -45,6 +45,8 @@ static const int toptab             = 0;        /* 0 means bottom tab */
 static const int floatbar           = 0;/* 1 means the bar will float(don't have padding),0 means the bar have padding */
 static const int topbar             = 1;        /* 0 means bottom bar */
 static const int focusonwheel       = 0;
+static const char activatewindow_selftrust[]     = "keepassxc"; /* WM_CLASS/WM_INSTANCE substring: a window matching this may unhide/activate itself via _NET_ACTIVE_WINDOW */
+static const char activatewindow_switchertrust[] = "rofi";      /* WM_CLASS/WM_INSTANCE substring: _NET_ACTIVE_WINDOW requests are honored while a window matching this currently has focus (a window switcher) */
 /* static const int horizpadbar        = 5; */
 /* static const int vertpadbar         = 11; */
 static const int horizpadbar        = 0;
@@ -85,7 +87,7 @@ static const char *colors[][3]      = {
 };
 
 /* tagging */
-static char *tags[] = { "󰋜", "󱍓", "󰖟", "", "󰇰", "󱉐", "7", "󰊗", "󰒲" };
+static char *tags[] = { "󰋜", "󱍓", "󰖟", "", "󰇰", "󱚡", "7", "󰊗", "󰒲" };
 
 static const char* eww[] = { "eww", "open" , "eww", NULL };
 

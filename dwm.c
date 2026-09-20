@@ -275,6 +275,7 @@ static void checkotherwm(void);
 static void cleanup(void);
 static void cleanupmon(Monitor *mon);
 static void clientmessage(XEvent *e);
+static int windowclassis(Window win, const char *needle);
 static void configure(Client *client);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
@@ -865,6 +866,22 @@ void cleanupmon(Monitor *mon) {
   free(mon);
 }
 
+/* true if win's WM_CLASS or WM_INSTANCE contains needle (case-insensitive) */
+int windowclassis(Window win, const char *needle) {
+  XClassHint ch = {NULL, NULL};
+  int match = 0;
+
+  if (XGetClassHint(display, win, &ch)) {
+    match = (ch.res_class && strcasestr(ch.res_class, needle)) ||
+            (ch.res_name && strcasestr(ch.res_name, needle));
+    if (ch.res_class)
+      XFree(ch.res_class);
+    if (ch.res_name)
+      XFree(ch.res_name);
+  }
+  return match;
+}
+
 /* handle EWMH client messages (fullscreen, activate window, systray docking) */
 void clientmessage(XEvent *e) {
   XWindowAttributes wa;
@@ -943,6 +960,14 @@ void clientmessage(XEvent *e) {
   } else if (cme->message_type == net_atom[NetActiveWindow]) {
     if (client != sel_mon->sel && !client->is_urgent)
       seturgent(client, 1);
+    /* only let a trusted requester steal focus outright: the window
+     * unhiding itself (keepassxc), or a request made while a window
+     * switcher (rofi) is the one currently focused. Anything else (e.g.
+     * LTspice under Wine re-requesting activation on its own) is left
+     * merely urgent. */
+    if (!windowclassis(client->win, activatewindow_selftrust) &&
+        !(sel_mon->sel && windowclassis(sel_mon->sel->win, activatewindow_switchertrust)))
+      return;
     for (i = 0; i < LENGTH(tags) && !((1 << i) & client->tags); i++)
       ;
     if (i < LENGTH(tags)) {
@@ -3056,7 +3081,7 @@ pid_t getparentprocess(pid_t p) {
   if (!(f = fopen(buf, "r")))
     return 0;
 
-  fscanf(f, "%*u %*s %*client %u", &v);
+  fscanf(f, "%*u %*s %*c %u", &v);
   fclose(f);
 #endif /* __linux__*/
 
